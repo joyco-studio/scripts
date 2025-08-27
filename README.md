@@ -1,8 +1,8 @@
 ## Setup (add to `package.json` scripts)
 ```json
-"compress": "curl -s https://raw.githubusercontent.com/basementstudio/scripts/main/compress.py | python3 -",
-"rename": "curl -s https://raw.githubusercontent.com/basementstudio/scripts/main/rename.py | python3 -",
-"resize": "curl -s https://raw.githubusercontent.com/basementstudio/scripts/main/resize.py | python3 -"
+"compress": "curl -s https://raw.githubusercontent.com/joyco-studio/scripts/main/compress.py | python3 -",
+"rename": "curl -s https://raw.githubusercontent.com/joyco-studio/scripts/main/rename.py | python3 -",
+"resize": "curl -s https://raw.githubusercontent.com/joyco-studio/scripts/main/resize.py | python3 -"
 ```
 
 ## rename.py
