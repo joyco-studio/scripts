@@ -1,13 +1,15 @@
 # Raycast Scripts
 
-Scripts meant to be copy-pasted directly into [Raycast](https://raycast.com/) for quick workflow integration.
+Scripts meant to be used with [Raycast](https://raycast.com/) for quick workflow integration.
 
 ## Installation
 
-1. Open Raycast → Extensions → Script Commands
-2. Create a new script command
-3. Copy the contents of the desired script
-4. Save and use
+1. Open Raycast → Settings → Extensions → Add
+2. Click "Add Script Directory"
+3. Pull the repo and select this `raycast` folder or copy the scripts to you local folder.
+4. All scripts will be automatically available in Raycast
+
+This approach lets Raycast watch the folder, so any new scripts added here will automatically appear in your commands.
 
 ---
 
