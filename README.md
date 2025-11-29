@@ -46,10 +46,6 @@ python3 compress.py <src_path> <dest_path> --quality 80
 | `dest_path` | Output directory for compressed images |
 | `--quality` | WebP quality (0-100), default: 80 |
 
-**Supported formats:** jpg, jpeg, png, bmp, tiff, webp
-
-<img width="469" alt="compress output" src="https://github.com/basementstudio/scripts/assets/43894343/b01eecee-38cc-4d5f-b18c-375bede7b619">
-
 ---
 
 #### `rename.py`
