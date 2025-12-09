@@ -6,6 +6,7 @@ Scripts meant to be used with [Raycast](https://raycast.com/) for quick workflow
 
 1. Open Raycast → Settings → Extensions → Add
 2. Click "Add Script Directory"
+   [add-script-directory](https://qfxa88yauvyse9vr.public.blob.vercel-storage.com/add-script-directory)
 3. Pull the repo and select this `raycast` folder or copy the scripts to you local folder.
 4. All scripts will be automatically available in Raycast
 
