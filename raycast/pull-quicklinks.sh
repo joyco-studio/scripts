@@ -1,5 +1,14 @@
 #!/bin/bash
 
+# Required parameters:
+# @raycast.schemaVersion 1
+# @raycast.title Pull Quicklinks
+# @raycast.mode compact
+
+# Optional parameters:
+# @raycast.icon 🔗
+# @raycast.packageName JOYCO Developer Tools
+
 # Pull quicklinks.json from registry and save with timestamp
 
 DATE=$(date +"%m-%d-%Y")

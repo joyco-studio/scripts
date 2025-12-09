@@ -7,7 +7,7 @@
 
 # Optional parameters:
 # @raycast.icon 💀
-# @raycast.packageName Developer Utils
+# @raycast.packageName JOYCO Developer Tools
 # @raycast.argument1 { "type": "text", "placeholder": "port number" }
 
 PORT=$1
