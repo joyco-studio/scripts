@@ -35,3 +35,15 @@ Kill a process running on a specific port. No more hunting for PIDs.
 → "Killed process 12345 on port 3000"
 ```
 
+---
+
+### `pull-quicklinks.sh` 🔗
+
+Downloads the latest quicklinks.json from the Joyco registry and saves it to your Downloads folder.
+
+**Usage:** Run from Raycast, file is automatically downloaded.
+
+```
+> Pull Quicklinks
+→ "✓ Downloaded 12 quicklinks to ~/Downloads/quicklinks-pull-12-09-2024.json"
+```

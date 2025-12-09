@@ -89,3 +89,4 @@ python3 resize.py ./images ./output --width 1920 --height 1080
 
 **Supported formats:** jpg, jpeg, png, bmp, tiff, webp
 
+
