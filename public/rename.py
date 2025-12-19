@@ -32,7 +32,7 @@ def main():
     try:
         if os.listdir(src_path):
             counter = 0
-            for filename in os.listdir(src_path):
+            for filename in sorted(os.listdir(src_path)):
                 file_path = os.path.join(src_path, filename)
                 if os.path.isdir(file_path):
                     continue
