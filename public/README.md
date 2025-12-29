@@ -12,7 +12,7 @@ Add these to your `package.json` scripts:
     "compress": "curl -s https://s.joyco.studio/compress.py | python3 -",
     "rename": "curl -s https://s.joyco.studio/rename.py | python3 -",
     "resize": "curl -s https://s.joyco.studio/resize.py | python3 -",
-    "fix-svg": "pnpx jscodeshift -t https://s.joyco.studio/fix-svg-jsx-attrs.js ./**/*.{tsx,jsx}"
+    "fix-svg": "curl -s https://s.joyco.studio/fix-svg.sh | sh -"
   }
 }
 ```
