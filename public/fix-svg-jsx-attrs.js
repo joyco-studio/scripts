@@ -1,15 +1,3 @@
-/**
- * jscodeshift codemod
- * Fixes SVG kebab-case attributes to JSX camelCase
- * ONLY inside <svg> elements
- *
- * Usage:
- *   npx jscodeshift -t fix-svg-jsx-attrs.js src/**\/*.{js,jsx,ts,tsx}
- *
- * Dry run:
- *   npx jscodeshift -t fix-svg-jsx-attrs.js src/**\/*.{js,jsx,ts,tsx} --dry --print
- */
-
 const SVG_ATTR_MAP = {
   // Fill and stroke attributes
   'fill-rule': 'fillRule',
@@ -105,12 +93,6 @@ const SVG_ATTR_MAP = {
   'glyph-orientation-vertical': 'glyphOrientationVertical',
   'text-decoration': 'textDecoration',
   'enable-background': 'enableBackground',
-  
-  // ARIA and accessibility (commonly used in SVG)
-  'aria-labelledby': 'ariaLabelledby',
-  'aria-describedby': 'ariaDescribedby',
-  'aria-hidden': 'ariaHidden',
-  'aria-label': 'ariaLabel',
 }
 
 module.exports = function transformer(file, api) {
@@ -147,4 +129,3 @@ module.exports = function transformer(file, api) {
 
   return root.toSource({ quote: 'single' })
 }
-
