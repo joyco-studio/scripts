@@ -11,7 +11,8 @@ Add these to your `package.json` scripts:
   "scripts": {
     "compress": "curl -s https://raw.githubusercontent.com/joyco-studio/scripts/main/public/compress.py | python3 -",
     "rename": "curl -s https://raw.githubusercontent.com/joyco-studio/scripts/main/public/rename.py | python3 -",
-    "resize": "curl -s https://raw.githubusercontent.com/joyco-studio/scripts/main/public/resize.py | python3 -"
+    "resize": "curl -s https://raw.githubusercontent.com/joyco-studio/scripts/main/public/resize.py | python3 -",
+    "fix-svg": "pnpx jscodeshift -t https://raw.githubusercontent.com/joyco-studio/scripts/main/public/fix-svg-jsx-attrs.js ./**/*.{tsx,jsx}"
   }
 }
 ```
@@ -89,4 +90,43 @@ python3 resize.py ./images ./output --width 1920 --height 1080
 
 **Supported formats:** jpg, jpeg, png, bmp, tiff, webp
 
+---
+
+### `fix-svg-jsx-attrs.js`
+
+jscodeshift codemod that fixes SVG kebab-case attributes to JSX camelCase. Only transforms JSX inside `<svg>` elements—safe for web components.
+
+```bash
+npx jscodeshift -t fix-svg-jsx-attrs.js src/**/*.{js,jsx,ts,tsx}
+```
+
+| Attribute | Transforms to |
+|-----------|---------------|
+| `fill-rule` | `fillRule` |
+| `clip-rule` | `clipRule` |
+| `stroke-width` | `strokeWidth` |
+| `stroke-linecap` | `strokeLinecap` |
+| `stroke-linejoin` | `strokeLinejoin` |
+| `stroke-miterlimit` | `strokeMiterlimit` |
+| `color-interpolation-filters` | `colorInterpolationFilters` |
+
+**Dry run first:**
+
+```bash
+npx jscodeshift -t fix-svg-jsx-attrs.js src/**/*.tsx --dry --print
+```
+
+**Example:**
+
+```tsx
+// Before
+<svg>
+  <path fill-rule="evenodd" stroke-width="2" />
+</svg>
+
+// After
+<svg>
+  <path fillRule="evenodd" strokeWidth="2" />
+</svg>
+```
 
