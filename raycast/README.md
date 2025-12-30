@@ -49,3 +49,24 @@ Downloads the latest quicklinks.json from the Joyco registry and saves it to you
 > Pull Quicklinks
 → "✓ Downloaded 12 quicklinks to ~/Downloads/quicklinks-pull-12-09-2024.json"
 ```
+
+---
+
+### `video-first-frame.sh` 🎬
+
+Extracts the first frame of a video (local file or remote URL) as a PNG image. Opens a Finder dialog to let you choose where to save the extracted frame.
+
+**Requirements:** `ffmpeg` must be installed (`brew install ffmpeg`)
+
+**Usage:** Run from Raycast, enter the video path or URL when prompted.
+
+```
+> Extract Video First Frame
+> Enter video: /path/to/video.mp4
+→ Opens Finder save dialog
+→ "Saved to first_frame.png"
+```
+
+Works with:
+- Local video files (e.g., `/Users/you/Movies/clip.mp4`)
+- Remote URLs (e.g., `https://example.com/video.mp4`)
