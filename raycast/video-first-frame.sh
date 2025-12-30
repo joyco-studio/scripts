@@ -8,13 +8,22 @@
 # Optional parameters:
 # @raycast.icon 🎬
 # @raycast.packageName JOYCO Developer Tools
-# @raycast.argument1 { "type": "text", "placeholder": "video path or URL" }
+# @raycast.argument1 { "type": "text", "placeholder": "video path or URL", "optional": true }
 
 VIDEO_INPUT="$1"
 
+# If no video input provided, open Finder to select a file
 if [ -z "$VIDEO_INPUT" ]; then
-  echo "Error: No video path or URL provided"
-  exit 1
+  VIDEO_INPUT=$(osascript -e 'tell application "Finder"
+    activate
+    set videoFile to choose file with prompt "Select a video file:" of type {"public.movie"}
+    return POSIX path of videoFile
+  end tell' 2>/dev/null)
+  
+  if [ -z "$VIDEO_INPUT" ]; then
+    echo "Cancelled"
+    exit 0
+  fi
 fi
 
 # Check if ffmpeg is installed
@@ -67,5 +76,8 @@ fi
 # Move the temp file to the chosen location
 mv "$TEMP_FILE" "$SAVE_PATH"
 rm -rf "$TEMP_DIR"
+
+# Reveal the saved file in Finder
+open -R "$SAVE_PATH"
 
 echo "Saved to $(basename "$SAVE_PATH")"
