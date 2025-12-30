@@ -7,4 +7,4 @@ TRANSFORM_FILE=$(mktemp)
 trap 'rm -f "$TRANSFORM_FILE"' EXIT
 
 curl -fsSL "$TRANSFORM_URL" -o "$TRANSFORM_FILE"
-pnpx jscodeshift --parser=tsx -t "$TRANSFORM_FILE" ./**/*.tsx
+find . -name "*.tsx" -type f ! -path "./node_modules/*" -print0 | xargs -0 pnpx jscodeshift --parser=tsx -t "$TRANSFORM_FILE"
