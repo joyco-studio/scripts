@@ -9,10 +9,10 @@ Add these to your `package.json` scripts:
 ```json
 {
   "scripts": {
-    "compress": "curl -s https://s.joyco.studio/compress.py | python3 -",
-    "rename": "curl -s https://s.joyco.studio/rename.py | python3 -",
-    "resize": "curl -s https://s.joyco.studio/resize.py | python3 -",
-    "fix-svg": "curl -s https://s.joyco.studio/fix-svg.sh | sh -"
+    "compress": "curl -Ls https://s.joyco.studio/compress.py | python3 -",
+    "rename": "curl -Ls https://s.joyco.studio/rename.py | python3 -",
+    "resize": "curl -Ls https://s.joyco.studio/resize.py | python3 -",
+    "fix-svg": "curl -Ls https://s.joyco.studio/fix-svg.sh | sh -"
   }
 }
 ```
