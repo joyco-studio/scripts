@@ -7,4 +7,4 @@ TRANSFORM_FILE=$(mktemp)
 trap 'rm -f "$TRANSFORM_FILE"' EXIT
 
 curl -fsSL "$TRANSFORM_URL" -o "$TRANSFORM_FILE"
-pnpx jscodeshift -t "$TRANSFORM_FILE" ./**/*.{tsx,jsx}
+pnpx jscodeshift --parser=tsx -t "$TRANSFORM_FILE" ./**/*.tsx
