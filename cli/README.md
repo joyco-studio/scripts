@@ -12,18 +12,20 @@ pnpx @joycostudio/scripts rename -z 4 ./frames ./output/frame_%n.png
 pnpx @joycostudio/scripts fix-svg src --dry --print
 ```
 
-## Commands
+For local development, build the CLI before running it directly:
 
-All command documentation is centralized in `packages/cli/commands.json`. Run `pnpx @joycostudio/scripts --help` to see the latest command list and per-command help.
+```bash
+pnpm build
+node bin/joyco-scripts.js --help
+```
 
 ## Adding a new script
 
 1) Add the script file to `packages/cli/tools/`.
-2) Add a new entry to `packages/cli/commands.json` with the command name, summary, usage, args, options, and examples.
-3) Add a handler in `packages/cli/bin/joyco-scripts.js` that executes the script.
-4) If the script needs extra runtime dependencies (for example, Python packages), add a dependency check and installer prompt in the handler.
+2) Add a new command module in `packages/cli/src/commands/` and wire it into `packages/cli/src/cli.ts`.
+3) Keep command logic in `packages/cli/src/core/` so it can be unit tested without spawning the CLI.
 
-Keeping `packages/cli/commands.json` as the source of truth ensures the CLI help output stays consistent.
+Keeping the command definitions in `packages/cli/src/commands/` ensures the CLI help output stays consistent.
 
 ## 🦋 Version Management
 
