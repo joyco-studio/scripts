@@ -1,0 +1,141 @@
+{
+  "cliName": "joyco-scripts",
+  "description": "Joyco utility scripts bundled as a pnpx CLI.",
+  "commands": [
+    {
+      "name": "compress",
+      "summary": "Batch compress images to WebP format with quality control.",
+      "usage": "joyco-scripts compress <src_path> <dest_path> [--quality <number>]",
+      "args": [
+        {
+          "name": "src_path",
+          "required": true,
+          "description": "Input directory containing images."
+        },
+        {
+          "name": "dest_path",
+          "required": true,
+          "description": "Output directory for compressed images."
+        }
+      ],
+      "options": [
+        {
+          "flags": "--quality <number>",
+          "type": "number",
+          "default": 80,
+          "description": "WebP quality (0-100)."
+        }
+      ],
+      "examples": [
+        "joyco-scripts compress ./images ./output --quality 80"
+      ],
+      "dependencies": [
+        "python3",
+        "pillow"
+      ]
+    },
+    {
+      "name": "rename",
+      "summary": "Copy and rename files with sequential numbering.",
+      "usage": "joyco-scripts rename <src_path> <dest_pattern> [-z <number>]",
+      "args": [
+        {
+          "name": "src_path",
+          "required": true,
+          "description": "Source directory with files to rename."
+        },
+        {
+          "name": "dest_pattern",
+          "required": true,
+          "description": "Output pattern where %n becomes the sequence number."
+        }
+      ],
+      "options": [
+        {
+          "flags": "-z, --zero-padding <number>",
+          "type": "number",
+          "default": 2,
+          "description": "Zero padding width."
+        }
+      ],
+      "examples": [
+        "joyco-scripts rename -z 4 ./frames ./output/frame_%n.png"
+      ],
+      "dependencies": [
+        "python3"
+      ]
+    },
+    {
+      "name": "resize",
+      "summary": "Batch resize images by exact dimensions or scale factor.",
+      "usage": "joyco-scripts resize <src_path> <dest_path> [--width <px> --height <px> | --scale <factor>]",
+      "args": [
+        {
+          "name": "src_path",
+          "required": true,
+          "description": "Input directory containing images."
+        },
+        {
+          "name": "dest_path",
+          "required": true,
+          "description": "Output directory for resized images."
+        }
+      ],
+      "options": [
+        {
+          "flags": "--width <px>",
+          "type": "number",
+          "description": "Target width in pixels."
+        },
+        {
+          "flags": "--height <px>",
+          "type": "number",
+          "description": "Target height in pixels."
+        },
+        {
+          "flags": "--scale <factor>",
+          "type": "number",
+          "description": "Scale factor (e.g., 0.5 for half size)."
+        }
+      ],
+      "examples": [
+        "joyco-scripts resize ./images ./output --scale 0.5",
+        "joyco-scripts resize ./images ./output --width 1920 --height 1080"
+      ],
+      "dependencies": [
+        "python3",
+        "pillow"
+      ]
+    },
+    {
+      "name": "fix-svg",
+      "summary": "Fix SVG kebab-case attributes to JSX camelCase in TSX files.",
+      "usage": "joyco-scripts fix-svg [paths...] [--dry] [--print]",
+      "args": [
+        {
+          "name": "paths",
+          "required": false,
+          "description": "Files or directories to process (defaults to current directory)."
+        }
+      ],
+      "options": [
+        {
+          "flags": "--dry",
+          "description": "Run a dry pass without writing changes."
+        },
+        {
+          "flags": "--print",
+          "description": "Print transformed files to stdout (use with --dry)."
+        }
+      ],
+      "examples": [
+        "joyco-scripts fix-svg src",
+        "joyco-scripts fix-svg src --dry --print"
+      ],
+      "dependencies": [
+        "node",
+        "jscodeshift"
+      ]
+    }
+  ]
+}

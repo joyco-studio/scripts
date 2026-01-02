@@ -1,0 +1,44 @@
+{
+  "name": "@joycostudio/scripts",
+  "version": "0.0.0",
+  "description": "Joyco utility scripts as a pnpx CLI",
+  "bin": {
+    "joyco-scripts": "bin/joyco-scripts.js"
+  },
+  "main": "bin/joyco-scripts.js",
+  "files": [
+    "bin/",
+    "tools/",
+    "commands.json",
+    "README.md"
+  ],
+  "keywords": [
+    "cli",
+    "scripts",
+    "joyco"
+  ],
+  "author": "joyco.studio",
+  "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/joyco-studio/scripts.git",
+    "directory": "packages/cli"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "changeset": "changeset",
+    "version:package": "changeset version",
+    "release": "changeset publish"
+  },
+  "packageManager": "pnpm@10.11.0",
+  "dependencies": {
+    "commander": "^12.1.0",
+    "fast-glob": "^3.3.2",
+    "jscodeshift": "^0.15.2"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.27.1"
+  }
+}
