@@ -1,44 +1,6 @@
-import type { CommandModule } from "./types";
-
-const definition: CommandModule["definition"] = {
-  name: "resize",
-  summary: "Batch resize images by exact dimensions or scale factor.",
-  usage:
-    "scripts resize <src_path> <dest_path> [--width <px> --height <px> | --scale <factor>]",
-  args: [
-    {
-      name: "src_path",
-      required: true,
-      description: "Input directory containing images.",
-    },
-    {
-      name: "dest_path",
-      required: true,
-      description: "Output directory for resized images.",
-    },
-  ],
-  options: [
-    {
-      flags: "--width <px>",
-      type: "number",
-      description: "Target width in pixels.",
-    },
-    {
-      flags: "--height <px>",
-      type: "number",
-      description: "Target height in pixels.",
-    },
-    {
-      flags: "--scale <factor>",
-      type: "number",
-      description: "Scale factor (e.g., 0.5 for half size).",
-    },
-  ],
-  examples: [
-    "scripts resize ./images ./output --scale 0.5",
-    "scripts resize ./images ./output --width 1920 --height 1080",
-  ],
-};
+import type { Command } from "commander";
+import { addExamples, handleCommandError, parseNumber } from "./utils";
+import { resizeImages } from "../core/resize";
 
 function validateResizeOptions(options: {
   scale?: number;
@@ -58,31 +20,40 @@ function validateResizeOptions(options: {
   }
 }
 
-async function handler(
-  srcPath: string,
-  destPath: string,
-  options: { width?: number; height?: number; scale?: number }
-) {
-  const { resizeImages } = await import("../core/resize");
-  validateResizeOptions(options);
+export default function register(program: Command) {
+  const command = program
+    .command("resize")
+    .description("Batch resize images by exact dimensions or scale factor.")
+    .usage("<src_path> <dest_path> [--width <px> --height <px> | --scale <factor>]")
+    .argument("<src_path>", "Input directory containing images.")
+    .argument("<dest_path>", "Output directory for resized images.")
+    .option("--width <px>", "Target width in pixels.", parseNumber)
+    .option("--height <px>", "Target height in pixels.", parseNumber)
+    .option("--scale <factor>", "Scale factor (e.g., 0.5 for half size).", parseNumber)
+    .action(async (srcPath: string, destPath: string, options: { width?: number; height?: number; scale?: number }) => {
+      try {
+        validateResizeOptions(options);
 
-  const result = await resizeImages({
-    inputDir: srcPath,
-    outputDir: destPath,
-    width: options.width,
-    height: options.height,
-    scale: options.scale,
-  });
+        const result = await resizeImages({
+          inputDir: srcPath,
+          outputDir: destPath,
+          width: options.width,
+          height: options.height,
+          scale: options.scale,
+        });
 
-  for (const item of result.results) {
-    console.log(`Resized ${item.filename} and saved to ${item.outputPath}`);
-  }
+        for (const item of result.results) {
+          console.log(`Resized ${item.filename} and saved to ${item.outputPath}`);
+        }
+      } catch (error) {
+        handleCommandError(error);
+      }
+    });
+
+  addExamples(command, [
+    "scripts resize ./images ./output --scale 0.5",
+    "scripts resize ./images ./output --width 1920 --height 1080",
+  ]);
 }
 
-const command: CommandModule = {
-  definition,
-  handler,
-};
-
 export { validateResizeOptions };
-export default command;

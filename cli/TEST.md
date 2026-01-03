@@ -7,19 +7,19 @@ pnpm build
 ```
 
 ```bash
-node bin/joyco-scripts.js --help
+node dist/cli.js --help
 ```
 
 ```bash
-node bin/joyco-scripts.js compress /Users/matiasperez/Desktop/temp/hedra-img-exports /Users/matiasperez/Desktop/temp/hedra-img-exports-output-compress --quality 80
+node dist/cli.js compress /Users/matiasperez/Desktop/temp/hedra-img-exports /Users/matiasperez/Desktop/temp/hedra-img-exports-output-compress --quality 80
 ```
 
 ```bash
-node bin/joyco-scripts.js resize /Users/matiasperez/Desktop/temp/hedra-img-exports /Users/matiasperez/Desktop/temp/hedra-img-exports-output-resize-scale --scale 0.5
+node dist/cli.js resize /Users/matiasperez/Desktop/temp/hedra-img-exports /Users/matiasperez/Desktop/temp/hedra-img-exports-output-resize-scale --scale 0.5
 ```
 
 ```bash
-node bin/joyco-scripts.js resize /Users/matiasperez/Desktop/temp/hedra-img-exports /Users/matiasperez/Desktop/temp/hedra-img-exports-output-resize-dims --width 1920 --height 1080
+node dist/cli.js resize /Users/matiasperez/Desktop/temp/hedra-img-exports /Users/matiasperez/Desktop/temp/hedra-img-exports-output-resize-dims --width 1920 --height 1080
 ```
 
 ```bash
@@ -27,9 +27,9 @@ mkdir -p /Users/matiasperez/Desktop/temp/hedra-img-exports-output-sequence
 ```
 
 ```bash
-node bin/joyco-scripts.js sequence -z 4 /Users/matiasperez/Desktop/temp/hedra-img-exports /Users/matiasperez/Desktop/temp/hedra-img-exports-output-sequence/frame_%n
+node dist/cli.js sequence -z 4 /Users/matiasperez/Desktop/temp/hedra-img-exports /Users/matiasperez/Desktop/temp/hedra-img-exports-output-sequence/frame_%n
 ```
 
 ```bash
-node bin/joyco-scripts.js fix-svg /Users/matiasperez/Desktop/temp/hedra-img-exports --dry --print
+node dist/cli.js fix-svg /Users/matiasperez/Desktop/temp/hedra-img-exports --dry --print
 ```

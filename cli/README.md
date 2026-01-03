@@ -16,7 +16,7 @@ For local development, build the CLI before running it directly:
 
 ```bash
 pnpm build
-node bin/joyco-scripts.js --help
+node dist/cli.js --help
 ```
 
 ## Adding a new script

@@ -1,33 +1,10 @@
 import path from "path";
 import fs from "fs";
 import { spawnSync } from "child_process";
-import type { CommandModule } from "./types";
+import type { Command } from "commander";
+import { addExamples, handleCommandError } from "./utils";
 
 const scriptsDir = path.resolve(__dirname, "..", "lib", "codemod");
-
-const definition: CommandModule["definition"] = {
-  name: "fix-svg",
-  summary: "Fix SVG kebab-case attributes to JSX camelCase in TSX files.",
-  usage: "scripts fix-svg [paths...] [--dry] [--print]",
-  args: [
-    {
-      name: "paths...",
-      required: false,
-      description: "Files or directories to process (defaults to current directory).",
-    },
-  ],
-  options: [
-    {
-      flags: "--dry",
-      description: "Run a dry pass without writing changes.",
-    },
-    {
-      flags: "--print",
-      description: "Print transformed files to stdout (use with --dry).",
-    },
-  ],
-  examples: ["scripts fix-svg src", "scripts fix-svg src --dry --print"],
-};
 
 function resolveScript(name: string) {
   return path.join(scriptsDir, name);
@@ -98,9 +75,24 @@ async function handler(
   }
 }
 
-const command: CommandModule = {
-  definition,
-  handler,
-};
+export default function register(program: Command) {
+  const command = program
+    .command("fix-svg")
+    .description("Fix SVG kebab-case attributes to JSX camelCase in TSX files.")
+    .usage("[paths...] [--dry] [--print]")
+    .argument(
+      "[paths...]",
+      "Files or directories to process (defaults to current directory)."
+    )
+    .option("--dry", "Run a dry pass without writing changes.")
+    .option("--print", "Print transformed files to stdout (use with --dry).")
+    .action(async (paths: string[] | string | undefined, options: { dry?: boolean; print?: boolean }) => {
+      try {
+        await handler(paths, options);
+      } catch (error) {
+        handleCommandError(error);
+      }
+    });
 
-export default command;
+  addExamples(command, ["scripts fix-svg src", "scripts fix-svg src --dry --print"]);
+}

@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 "use strict";
 var __create = Object.create;
 var __defProp = Object.defineProperty;
@@ -5,9 +6,6 @@ var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
-var __esm = (fn, res) => function __init() {
-  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
-};
 var __commonJS = (cb, mod) => function __require() {
   return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
 };
@@ -341,8 +339,8 @@ var require_help = __commonJS({
        * @returns {number}
        */
       longestSubcommandTermLength(cmd, helper) {
-        return helper.visibleCommands(cmd).reduce((max, command5) => {
-          return Math.max(max, helper.subcommandTerm(command5).length);
+        return helper.visibleCommands(cmd).reduce((max, command) => {
+          return Math.max(max, helper.subcommandTerm(command).length);
         }, 0);
       }
       /**
@@ -1054,8 +1052,8 @@ var require_command = __commonJS({
        */
       _getCommandAndAncestors() {
         const result = [];
-        for (let command5 = this; command5; command5 = command5.parent) {
-          result.push(command5);
+        for (let command = this; command; command = command.parent) {
+          result.push(command);
         }
         return result;
       }
@@ -1483,21 +1481,21 @@ Expecting one of '${allowedValues.join("', '")}'`);
        * @param {Command} command
        * @private
        */
-      _registerCommand(command5) {
+      _registerCommand(command) {
         const knownBy = (cmd) => {
           return [cmd.name()].concat(cmd.aliases());
         };
-        const alreadyUsed = knownBy(command5).find(
+        const alreadyUsed = knownBy(command).find(
           (name) => this._findCommand(name)
         );
         if (alreadyUsed) {
           const existingCmd = knownBy(this._findCommand(alreadyUsed)).join("|");
-          const newCmd = knownBy(command5).join("|");
+          const newCmd = knownBy(command).join("|");
           throw new Error(
             `cannot add command '${newCmd}' as already have command '${existingCmd}'`
           );
         }
-        this.commands.push(command5);
+        this.commands.push(command);
       }
       /**
        * Add an option.
@@ -2598,12 +2596,12 @@ Expecting one of '${allowedValues.join("', '")}'`);
         let suggestion = "";
         if (flag.startsWith("--") && this._showSuggestionAfterError) {
           let candidateFlags = [];
-          let command5 = this;
+          let command = this;
           do {
-            const moreFlags = command5.createHelp().visibleOptions(command5).filter((option) => option.long).map((option) => option.long);
+            const moreFlags = command.createHelp().visibleOptions(command).filter((option) => option.long).map((option) => option.long);
             candidateFlags = candidateFlags.concat(moreFlags);
-            command5 = command5.parent;
-          } while (command5 && !command5._enablePositionalOptions);
+            command = command.parent;
+          } while (command && !command._enablePositionalOptions);
           suggestion = suggestSimilar(flag, candidateFlags);
         }
         const message = `error: unknown option '${flag}'${suggestion}`;
@@ -2633,9 +2631,9 @@ Expecting one of '${allowedValues.join("', '")}'`);
         let suggestion = "";
         if (this._showSuggestionAfterError) {
           const candidateNames = [];
-          this.createHelp().visibleCommands(this).forEach((command5) => {
-            candidateNames.push(command5.name());
-            if (command5.alias()) candidateNames.push(command5.alias());
+          this.createHelp().visibleCommands(this).forEach((command) => {
+            candidateNames.push(command.name());
+            if (command.alias()) candidateNames.push(command.alias());
           });
           suggestion = suggestSimilar(unknownName, candidateNames);
         }
@@ -2706,11 +2704,11 @@ Expecting one of '${allowedValues.join("', '")}'`);
        */
       alias(alias) {
         if (alias === void 0) return this._aliases[0];
-        let command5 = this;
+        let command = this;
         if (this.commands.length !== 0 && this.commands[this.commands.length - 1]._executableHandler) {
-          command5 = this.commands[this.commands.length - 1];
+          command = this.commands[this.commands.length - 1];
         }
-        if (alias === command5._name)
+        if (alias === command._name)
           throw new Error("Command alias can't be the same as its name");
         const matchingCommand = this.parent?._findCommand(alias);
         if (matchingCommand) {
@@ -2719,7 +2717,7 @@ Expecting one of '${allowedValues.join("', '")}'`);
             `cannot add alias '${alias}' to command '${this.name()}' as already have command '${existingCmd}'`
           );
         }
-        command5._aliases.push(alias);
+        command._aliases.push(alias);
         return this;
       }
       /**
@@ -2842,7 +2840,7 @@ Expecting one of '${allowedValues.join("', '")}'`);
           contextOptions = void 0;
         }
         const context = this._getHelpContext(contextOptions);
-        this._getCommandAndAncestors().reverse().forEach((command5) => command5.emit("beforeAllHelp", context));
+        this._getCommandAndAncestors().reverse().forEach((command) => command.emit("beforeAllHelp", context));
         this.emit("beforeHelp", context);
         let helpInformation = this.helpInformation(context);
         if (deprecatedCallback) {
@@ -2857,7 +2855,7 @@ Expecting one of '${allowedValues.join("', '")}'`);
         }
         this.emit("afterHelp", context);
         this._getCommandAndAncestors().forEach(
-          (command5) => command5.emit("afterAllHelp", context)
+          (command) => command.emit("afterAllHelp", context)
         );
       }
       /**
@@ -3026,7 +3024,116 @@ var require_commander = __commonJS({
   }
 });
 
+// src/cli.ts
+var cli_exports = {};
+__export(cli_exports, {
+  buildProgram: () => buildProgram,
+  run: () => run
+});
+module.exports = __toCommonJS(cli_exports);
+
+// node_modules/.pnpm/commander@12.1.0/node_modules/commander/esm.mjs
+var import_index = __toESM(require_commander(), 1);
+var {
+  program,
+  createCommand,
+  createArgument,
+  createOption,
+  CommanderError,
+  InvalidArgumentError,
+  InvalidOptionArgumentError,
+  // deprecated old name
+  Command,
+  Argument,
+  Option,
+  Help
+} = import_index.default;
+
+// package.json
+var package_default = {
+  name: "@joycostudio/scripts",
+  version: "0.0.0",
+  description: "Joyco utility scripts as a pnpx CLI",
+  bin: {
+    scripts: "dist/cli.js"
+  },
+  main: "dist/cli.js",
+  files: [
+    "dist/",
+    "lib/",
+    "README.md"
+  ],
+  keywords: [
+    "cli",
+    "scripts",
+    "joyco"
+  ],
+  author: "joyco.studio",
+  license: "ISC",
+  repository: {
+    type: "git",
+    url: "https://github.com/joyco-studio/scripts.git",
+    directory: "packages/cli"
+  },
+  publishConfig: {
+    access: "public"
+  },
+  scripts: {
+    build: "node esbuild.config.mjs",
+    test: 'node --test -r ts-node/register/transpile-only "test/**/*.test.ts"',
+    tscheck: "tsc --noEmit",
+    changeset: "changeset",
+    "version:package": "changeset version",
+    release: "changeset publish"
+  },
+  packageManager: "pnpm@10.11.0",
+  dependencies: {
+    commander: "^12.1.0",
+    jscodeshift: "^0.15.2",
+    sharp: "^0.34.3"
+  },
+  devDependencies: {
+    "@changesets/cli": "^2.27.1",
+    "@types/node": "^25.0.3",
+    esbuild: "^0.27.2",
+    "ts-node": "^10.9.2",
+    typescript: "^5.6.3"
+  }
+};
+
+// src/commands/utils.ts
+function parseNumber(value) {
+  const parsed = Number(value);
+  if (Number.isNaN(parsed)) {
+    throw new Error(`Expected a number but received: ${value}`);
+  }
+  return parsed;
+}
+function addExamples(command, examples) {
+  if (!Array.isArray(examples) || examples.length === 0) {
+    return;
+  }
+  const formatted = examples.map((example) => `  ${example}`).join("\n");
+  command.addHelpText("after", `
+Examples:
+${formatted}
+`);
+}
+function handleCommandError(error) {
+  if (error instanceof Error) {
+    console.error(error.message);
+  } else {
+    console.error(String(error));
+  }
+  process.exit(1);
+}
+
+// src/core/compress.ts
+var import_path2 = __toESM(require("path"));
+var import_promises2 = __toESM(require("fs/promises"));
+
 // src/core/fs.ts
+var import_promises = __toESM(require("fs/promises"));
 async function listFiles(dir) {
   const entries = await import_promises.default.readdir(dir, { withFileTypes: true });
   return entries.filter((entry) => entry.isFile()).map((entry) => entry.name).sort();
@@ -3049,40 +3156,23 @@ async function moveFile(source, destination) {
     throw error;
   }
 }
-var import_promises;
-var init_fs = __esm({
-  "src/core/fs.ts"() {
-    "use strict";
-    import_promises = __toESM(require("fs/promises"));
-  }
-});
 
 // src/core/image-utils.ts
+var import_path = __toESM(require("path"));
+var SUPPORTED_IMAGE_EXTENSIONS = /* @__PURE__ */ new Set([
+  ".jpg",
+  ".jpeg",
+  ".png",
+  ".bmp",
+  ".tiff",
+  ".webp"
+]);
 function isSupportedImage(filename) {
   const extension = import_path.default.extname(filename).toLowerCase();
   return SUPPORTED_IMAGE_EXTENSIONS.has(extension);
 }
-var import_path, SUPPORTED_IMAGE_EXTENSIONS;
-var init_image_utils = __esm({
-  "src/core/image-utils.ts"() {
-    "use strict";
-    import_path = __toESM(require("path"));
-    SUPPORTED_IMAGE_EXTENSIONS = /* @__PURE__ */ new Set([
-      ".jpg",
-      ".jpeg",
-      ".png",
-      ".bmp",
-      ".tiff",
-      ".webp"
-    ]);
-  }
-});
 
 // src/core/compress.ts
-var compress_exports = {};
-__export(compress_exports, {
-  compressImagesToWebp: () => compressImagesToWebp
-});
 async function compressImagesToWebp({
   inputDir,
   outputDir,
@@ -3120,224 +3210,47 @@ async function compressImagesToWebp({
     totalSizeAfter
   };
 }
-var import_path2, import_promises2;
-var init_compress = __esm({
-  "src/core/compress.ts"() {
-    "use strict";
-    import_path2 = __toESM(require("path"));
-    import_promises2 = __toESM(require("fs/promises"));
-    init_fs();
-    init_image_utils();
-  }
-});
-
-// src/core/resize.ts
-var resize_exports = {};
-__export(resize_exports, {
-  resizeImages: () => resizeImages
-});
-async function resolveScaledSize(inputPath, scale) {
-  const sharp = (await import("sharp")).default;
-  const metadata = await sharp(inputPath).metadata();
-  if (!metadata.width || !metadata.height) {
-    throw new Error(`Could not read image dimensions: ${inputPath}`);
-  }
-  return {
-    width: Math.round(metadata.width * scale),
-    height: Math.round(metadata.height * scale)
-  };
-}
-async function resizeImages({
-  inputDir,
-  outputDir,
-  width,
-  height,
-  scale
-}) {
-  const sharp = (await import("sharp")).default;
-  await ensureDir(outputDir);
-  const files = await listFiles(inputDir);
-  const results = [];
-  for (const filename of files) {
-    if (!isSupportedImage(filename)) {
-      continue;
-    }
-    const inputPath = import_path4.default.join(inputDir, filename);
-    let targetWidth = width;
-    let targetHeight = height;
-    if (typeof scale === "number") {
-      const scaled = await resolveScaledSize(inputPath, scale);
-      targetWidth = scaled.width;
-      targetHeight = scaled.height;
-    }
-    if (!targetWidth || !targetHeight) {
-      continue;
-    }
-    const outputPath = import_path4.default.join(outputDir, filename);
-    await sharp(inputPath).resize(targetWidth, targetHeight, { kernel: sharp.kernel.lanczos3 }).toFile(outputPath);
-    results.push({
-      filename,
-      inputPath,
-      outputPath,
-      width: targetWidth,
-      height: targetHeight
-    });
-  }
-  return { results };
-}
-var import_path4;
-var init_resize = __esm({
-  "src/core/resize.ts"() {
-    "use strict";
-    import_path4 = __toESM(require("path"));
-    init_fs();
-    init_image_utils();
-  }
-});
-
-// src/cli.ts
-var cli_exports = {};
-__export(cli_exports, {
-  buildProgram: () => buildProgram,
-  run: () => run
-});
-module.exports = __toCommonJS(cli_exports);
-
-// node_modules/.pnpm/commander@12.1.0/node_modules/commander/esm.mjs
-var import_index = __toESM(require_commander(), 1);
-var {
-  program,
-  createCommand,
-  createArgument,
-  createOption,
-  CommanderError,
-  InvalidArgumentError,
-  InvalidOptionArgumentError,
-  // deprecated old name
-  Command,
-  Argument,
-  Option,
-  Help
-} = import_index.default;
-
-// package.json
-var package_default = {
-  name: "@joycostudio/scripts",
-  version: "0.0.0",
-  description: "Joyco utility scripts as a pnpx CLI",
-  bin: {
-    scripts: "bin/joyco-scripts.js"
-  },
-  main: "dist/cli.js",
-  files: [
-    "bin/",
-    "dist/",
-    "lib/",
-    "README.md"
-  ],
-  keywords: [
-    "cli",
-    "scripts",
-    "joyco"
-  ],
-  author: "joyco.studio",
-  license: "ISC",
-  repository: {
-    type: "git",
-    url: "https://github.com/joyco-studio/scripts.git",
-    directory: "packages/cli"
-  },
-  publishConfig: {
-    access: "public"
-  },
-  scripts: {
-    build: "node esbuild.config.mjs",
-    test: 'node --test -r ts-node/register/transpile-only "test/**/*.test.ts"',
-    changeset: "changeset",
-    "version:package": "changeset version",
-    release: "changeset publish"
-  },
-  packageManager: "pnpm@10.11.0",
-  dependencies: {
-    commander: "^12.1.0",
-    jscodeshift: "^0.15.2",
-    sharp: "^0.34.3"
-  },
-  devDependencies: {
-    "@changesets/cli": "^2.27.1",
-    "@types/node": "^25.0.3",
-    esbuild: "^0.27.2",
-    "ts-node": "^10.9.2",
-    typescript: "^5.6.3"
-  }
-};
 
 // src/commands/compress.ts
-var definition = {
-  name: "compress",
-  summary: "Batch compress images to WebP format with quality control.",
-  usage: "scripts compress <src_path> <dest_path> [--quality <number>]",
-  args: [
-    {
-      name: "src_path",
-      required: true,
-      description: "Input directory containing images."
-    },
-    {
-      name: "dest_path",
-      required: true,
-      description: "Output directory for compressed images."
+function register(program2) {
+  const command = program2.command("compress").description("Batch compress images to WebP format with quality control.").usage("<src_path> <dest_path> [--quality <number>]").argument("<src_path>", "Input directory containing images.").argument("<dest_path>", "Output directory for compressed images.").option("--quality <number>", "WebP quality (0-100).", parseNumber, 80).action(async (srcPath, destPath, options) => {
+    try {
+      const summary = await compressImagesToWebp({
+        inputDir: srcPath,
+        outputDir: destPath,
+        quality: options.quality
+      });
+      for (const item of summary.results) {
+        console.log(`Compressed ${item.filename} and saved as ${item.outputPath}`);
+      }
+      console.log("\nSummary:");
+      console.log(`Total images processed: ${summary.results.length}`);
+      console.log(
+        `Total size before compression: ${(summary.totalSizeBefore / 1024).toFixed(2)} KB`
+      );
+      console.log(
+        `Total size after compression: ${(summary.totalSizeAfter / 1024).toFixed(2)} KB`
+      );
+      if (summary.totalSizeBefore > 0) {
+        const reduction = summary.totalSizeBefore - summary.totalSizeAfter;
+        const percent = reduction / summary.totalSizeBefore * 100;
+        console.log(
+          `Total size reduction: ${(reduction / 1024).toFixed(2)} KB (${percent.toFixed(2)}%)`
+        );
+      } else {
+        console.log("Total size reduction: 0.00 KB (0.00%)");
+      }
+    } catch (error) {
+      handleCommandError(error);
     }
-  ],
-  options: [
-    {
-      flags: "--quality <number>",
-      type: "number",
-      default: 80,
-      description: "WebP quality (0-100)."
-    }
-  ],
-  examples: ["scripts compress ./images ./output --quality 80"]
-};
-async function handler(srcPath, destPath, options) {
-  const { compressImagesToWebp: compressImagesToWebp2 } = await Promise.resolve().then(() => (init_compress(), compress_exports));
-  const summary = await compressImagesToWebp2({
-    inputDir: srcPath,
-    outputDir: destPath,
-    quality: options.quality
   });
-  for (const item of summary.results) {
-    console.log(`Compressed ${item.filename} and saved as ${item.outputPath}`);
-  }
-  console.log("\nSummary:");
-  console.log(`Total images processed: ${summary.results.length}`);
-  console.log(
-    `Total size before compression: ${(summary.totalSizeBefore / 1024).toFixed(2)} KB`
-  );
-  console.log(
-    `Total size after compression: ${(summary.totalSizeAfter / 1024).toFixed(2)} KB`
-  );
-  if (summary.totalSizeBefore > 0) {
-    const reduction = summary.totalSizeBefore - summary.totalSizeAfter;
-    const percent = reduction / summary.totalSizeBefore * 100;
-    console.log(
-      `Total size reduction: ${(reduction / 1024).toFixed(2)} KB (${percent.toFixed(2)}%)`
-    );
-  } else {
-    console.log("Total size reduction: 0.00 KB (0.00%)");
-  }
+  addExamples(command, ["scripts compress ./images ./output --quality 80"]);
 }
-var command = {
-  definition,
-  handler
-};
-var compress_default = command;
 
 // src/core/rename.ts
 var import_promises3 = __toESM(require("fs/promises"));
 var import_os = __toESM(require("os"));
 var import_path3 = __toESM(require("path"));
-init_fs();
 function formatCounter(counter, width) {
   return String(counter).padStart(width, "0");
 }
@@ -3405,104 +3318,90 @@ async function renameFiles({
 }
 
 // src/commands/sequence.ts
-var definition2 = {
-  name: "sequence",
-  summary: "Copy and rename files with sequential numbering.",
-  usage: "scripts sequence <src_path> <dest_pattern> [-z <number>]",
-  args: [
-    {
-      name: "src_path",
-      required: true,
-      description: "Source directory with files to rename."
-    },
-    {
-      name: "dest_pattern",
-      required: true,
-      description: "Output pattern where %n becomes the sequence number."
-    }
-  ],
-  options: [
-    {
-      flags: "-z, --zero-padding <number>",
-      type: "number",
-      default: 2,
-      description: "Zero padding width."
-    }
-  ],
-  examples: ["scripts sequence -z 4 ./frames ./output/frame_%n.png"]
-};
-async function handler2(srcPath, destPattern, options) {
-  try {
-    const result = await renameFiles({
-      srcDir: srcPath,
-      targetPatternWithPath: destPattern,
-      zeroPadding: options.zeroPadding,
-      onPrepare: ({ sourcePath, tempPath }) => {
-        console.log(`Prepared to copy: ${sourcePath} -> ${tempPath}`);
+function register2(program2) {
+  const command = program2.command("sequence").description("Copy and rename files with sequential numbering.").usage("<src_path> <dest_pattern> [-z <number>]").argument("<src_path>", "Source directory with files to rename.").argument("<dest_pattern>", "Output pattern where %n becomes the sequence number.").option("-z, --zero-padding <number>", "Zero padding width.", parseNumber, 2).action(async (srcPath, destPattern, options) => {
+    try {
+      const result = await renameFiles({
+        srcDir: srcPath,
+        targetPatternWithPath: destPattern,
+        zeroPadding: options.zeroPadding,
+        onPrepare: ({ sourcePath, tempPath }) => {
+          console.log(`Prepared to copy: ${sourcePath} -> ${tempPath}`);
+        }
+      });
+      if (result.empty) {
+        console.log("No files found in the source directory.");
+        return;
       }
-    });
-    if (result.empty) {
-      console.log("No files found in the source directory.");
-      return;
-    }
-    console.log("All files successfully copied and renamed.");
-  } catch (error) {
-    if (error instanceof Error) {
-      if (error.message.startsWith("Source directory does not exist") || error.message.startsWith("Target directory does not exist")) {
-        console.error(error.message);
+      console.log("All files successfully copied and renamed.");
+    } catch (error) {
+      if (error instanceof Error) {
+        if (error.message.startsWith("Source directory does not exist") || error.message.startsWith("Target directory does not exist")) {
+          console.error(error.message);
+          process.exit(1);
+        }
+        console.error(`An error occurred: ${error.message}`);
         process.exit(1);
       }
-      console.error(`An error occurred: ${error.message}`);
-      process.exit(1);
+      handleCommandError(error);
     }
-    throw error;
-  }
+  });
+  addExamples(command, ["scripts sequence -z 4 ./frames ./output/frame_%n.png"]);
 }
-var command2 = {
-  definition: definition2,
-  handler: handler2
-};
-var sequence_default = command2;
+
+// src/core/resize.ts
+var import_path4 = __toESM(require("path"));
+async function resolveScaledSize(inputPath, scale) {
+  const sharp = (await import("sharp")).default;
+  const metadata = await sharp(inputPath).metadata();
+  if (!metadata.width || !metadata.height) {
+    throw new Error(`Could not read image dimensions: ${inputPath}`);
+  }
+  return {
+    width: Math.round(metadata.width * scale),
+    height: Math.round(metadata.height * scale)
+  };
+}
+async function resizeImages({
+  inputDir,
+  outputDir,
+  width,
+  height,
+  scale
+}) {
+  const sharp = (await import("sharp")).default;
+  await ensureDir(outputDir);
+  const files = await listFiles(inputDir);
+  const results = [];
+  for (const filename of files) {
+    if (!isSupportedImage(filename)) {
+      continue;
+    }
+    const inputPath = import_path4.default.join(inputDir, filename);
+    let targetWidth = width;
+    let targetHeight = height;
+    if (typeof scale === "number") {
+      const scaled = await resolveScaledSize(inputPath, scale);
+      targetWidth = scaled.width;
+      targetHeight = scaled.height;
+    }
+    if (!targetWidth || !targetHeight) {
+      continue;
+    }
+    const outputPath = import_path4.default.join(outputDir, filename);
+    await sharp(inputPath).resize(targetWidth, targetHeight, { kernel: sharp.kernel.lanczos3 }).toFile(outputPath);
+    results.push({
+      filename,
+      inputPath,
+      outputPath,
+      width: targetWidth,
+      height: targetHeight
+    });
+  }
+  return { results };
+}
 
 // src/commands/resize.ts
-var definition3 = {
-  name: "resize",
-  summary: "Batch resize images by exact dimensions or scale factor.",
-  usage: "scripts resize <src_path> <dest_path> [--width <px> --height <px> | --scale <factor>]",
-  args: [
-    {
-      name: "src_path",
-      required: true,
-      description: "Input directory containing images."
-    },
-    {
-      name: "dest_path",
-      required: true,
-      description: "Output directory for resized images."
-    }
-  ],
-  options: [
-    {
-      flags: "--width <px>",
-      type: "number",
-      description: "Target width in pixels."
-    },
-    {
-      flags: "--height <px>",
-      type: "number",
-      description: "Target height in pixels."
-    },
-    {
-      flags: "--scale <factor>",
-      type: "number",
-      description: "Scale factor (e.g., 0.5 for half size)."
-    }
-  ],
-  examples: [
-    "scripts resize ./images ./output --scale 0.5",
-    "scripts resize ./images ./output --width 1920 --height 1080"
-  ]
-};
 function validateResizeOptions(options) {
   const hasScale = typeof options.scale === "number";
   const hasWidth = typeof options.width === "number";
@@ -3514,54 +3413,35 @@ function validateResizeOptions(options) {
     throw new Error("Provide --scale or both --width and --height.");
   }
 }
-async function handler3(srcPath, destPath, options) {
-  const { resizeImages: resizeImages2 } = await Promise.resolve().then(() => (init_resize(), resize_exports));
-  validateResizeOptions(options);
-  const result = await resizeImages2({
-    inputDir: srcPath,
-    outputDir: destPath,
-    width: options.width,
-    height: options.height,
-    scale: options.scale
+function register3(program2) {
+  const command = program2.command("resize").description("Batch resize images by exact dimensions or scale factor.").usage("<src_path> <dest_path> [--width <px> --height <px> | --scale <factor>]").argument("<src_path>", "Input directory containing images.").argument("<dest_path>", "Output directory for resized images.").option("--width <px>", "Target width in pixels.", parseNumber).option("--height <px>", "Target height in pixels.", parseNumber).option("--scale <factor>", "Scale factor (e.g., 0.5 for half size).", parseNumber).action(async (srcPath, destPath, options) => {
+    try {
+      validateResizeOptions(options);
+      const result = await resizeImages({
+        inputDir: srcPath,
+        outputDir: destPath,
+        width: options.width,
+        height: options.height,
+        scale: options.scale
+      });
+      for (const item of result.results) {
+        console.log(`Resized ${item.filename} and saved to ${item.outputPath}`);
+      }
+    } catch (error) {
+      handleCommandError(error);
+    }
   });
-  for (const item of result.results) {
-    console.log(`Resized ${item.filename} and saved to ${item.outputPath}`);
-  }
+  addExamples(command, [
+    "scripts resize ./images ./output --scale 0.5",
+    "scripts resize ./images ./output --width 1920 --height 1080"
+  ]);
 }
-var command3 = {
-  definition: definition3,
-  handler: handler3
-};
-var resize_default = command3;
 
 // src/commands/fix-svg.ts
 var import_path5 = __toESM(require("path"));
 var import_fs4 = __toESM(require("fs"));
 var import_child_process = require("child_process");
 var scriptsDir = import_path5.default.resolve(__dirname, "..", "lib", "codemod");
-var definition4 = {
-  name: "fix-svg",
-  summary: "Fix SVG kebab-case attributes to JSX camelCase in TSX files.",
-  usage: "scripts fix-svg [paths...] [--dry] [--print]",
-  args: [
-    {
-      name: "paths...",
-      required: false,
-      description: "Files or directories to process (defaults to current directory)."
-    }
-  ],
-  options: [
-    {
-      flags: "--dry",
-      description: "Run a dry pass without writing changes."
-    },
-    {
-      flags: "--print",
-      description: "Print transformed files to stdout (use with --dry)."
-    }
-  ],
-  examples: ["scripts fix-svg src", "scripts fix-svg src --dry --print"]
-};
 function resolveScript(name) {
   return import_path5.default.join(scriptsDir, name);
 }
@@ -3579,7 +3459,7 @@ function runCommand(bin, args, options = {}) {
   }
   return result;
 }
-async function handler4(paths, options) {
+async function handler(paths, options) {
   const normalizedPaths = Array.isArray(paths) ? paths : typeof paths === "string" ? [paths] : [];
   const targetPaths = normalizedPaths.length > 0 ? normalizedPaths : [process.cwd()];
   const transformPath = resolveScript("fix-svg-jsx-attrs.js");
@@ -3613,88 +3493,44 @@ async function handler4(paths, options) {
     }
   }
 }
-var command4 = {
-  definition: definition4,
-  handler: handler4
-};
-var fix_svg_default = command4;
+function register4(program2) {
+  const command = program2.command("fix-svg").description("Fix SVG kebab-case attributes to JSX camelCase in TSX files.").usage("[paths...] [--dry] [--print]").argument(
+    "[paths...]",
+    "Files or directories to process (defaults to current directory)."
+  ).option("--dry", "Run a dry pass without writing changes.").option("--print", "Print transformed files to stdout (use with --dry).").action(async (paths, options) => {
+    try {
+      await handler(paths, options);
+    } catch (error) {
+      handleCommandError(error);
+    }
+  });
+  addExamples(command, ["scripts fix-svg src", "scripts fix-svg src --dry --print"]);
+}
 
 // src/cli.ts
 var cliName = "scripts";
 var cliDescription = "Joyco utility scripts bundled as a pnpx CLI.";
-var commands = [
-  compress_default,
-  sequence_default,
-  resize_default,
-  fix_svg_default
+var commandRegistrations = [
+  register,
+  register2,
+  register3,
+  register4
 ];
-function parseNumber(value) {
-  const parsed = Number(value);
-  if (Number.isNaN(parsed)) {
-    throw new Error(`Expected a number but received: ${value}`);
-  }
-  return parsed;
-}
-function reportError(error) {
-  if (error instanceof Error) {
-    console.error(error.message);
-  } else {
-    console.error(String(error));
-  }
-  process.exit(1);
-}
 function buildProgram() {
   const program2 = new Command();
   program2.name(cliName);
   program2.description(cliDescription);
   program2.version(package_default.version);
-  for (const commandDoc of commands) {
-    const cmd = program2.command(commandDoc.definition.name).description(commandDoc.definition.summary);
-    if (commandDoc.definition.usage) {
-      cmd.usage(commandDoc.definition.usage.replace(`${cliName} `, ""));
-    }
-    if (Array.isArray(commandDoc.definition.args)) {
-      for (const arg of commandDoc.definition.args) {
-        const argSyntax = arg.required ? `<${arg.name}>` : `[${arg.name}]`;
-        cmd.argument(argSyntax, arg.description || "");
-      }
-    }
-    if (Array.isArray(commandDoc.definition.options)) {
-      for (const option of commandDoc.definition.options) {
-        const needsNumber = option.type === "number";
-        const hasDefault = typeof option.default !== "undefined";
-        if (needsNumber && hasDefault) {
-          cmd.option(option.flags, option.description, parseNumber, option.default);
-        } else if (needsNumber) {
-          cmd.option(option.flags, option.description, parseNumber);
-        } else if (hasDefault) {
-          cmd.option(option.flags, option.description, option.default);
-        } else {
-          cmd.option(option.flags, option.description);
-        }
-      }
-    }
-    if (Array.isArray(commandDoc.definition.examples) && commandDoc.definition.examples.length > 0) {
-      const formatted = commandDoc.definition.examples.map((example) => `  ${example}`).join("\n");
-      cmd.addHelpText("after", `
-Examples:
-${formatted}
-`);
-    }
-    cmd.action(async (...actionArgs) => {
-      const options = actionArgs.pop();
-      const args = actionArgs;
-      try {
-        await commandDoc.handler(...args, options);
-      } catch (error) {
-        reportError(error);
-      }
-    });
+  for (const register5 of commandRegistrations) {
+    register5(program2);
   }
   return program2;
 }
 function run(argv = process.argv) {
   buildProgram().parse(argv);
+}
+if (require.main === module) {
+  run();
 }
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {

@@ -112,7 +112,7 @@ export async function ensureBuild() {
 }
 
 export function runCli(args: string[]) {
-  return spawnSync(process.execPath, ["bin/joyco-scripts.js", ...args], {
+  return spawnSync(process.execPath, ["dist/cli.js", ...args], {
     cwd: repoRoot,
     encoding: "utf8",
   });

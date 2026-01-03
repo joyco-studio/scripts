@@ -3,11 +3,10 @@
   "version": "0.0.0",
   "description": "Joyco utility scripts as a pnpx CLI",
   "bin": {
-    "scripts": "bin/joyco-scripts.js"
+    "scripts": "dist/cli.js"
   },
   "main": "dist/cli.js",
   "files": [
-    "bin/",
     "dist/",
     "lib/",
     "README.md"
@@ -30,6 +29,7 @@
   "scripts": {
     "build": "node esbuild.config.mjs",
     "test": "node --test -r ts-node/register/transpile-only \"test/**/*.test.ts\"",
+    "tscheck": "tsc --noEmit",
     "changeset": "changeset",
     "version:package": "changeset version",
     "release": "changeset publish"
