@@ -28,7 +28,7 @@
   },
   "scripts": {
     "build": "node esbuild.config.mjs",
-    "test": "node --test -r ts-node/register/transpile-only \"test/**/*.test.ts\"",
+    "test": "node --test -r ts-node/register/transpile-only test/*.test.ts",
     "tscheck": "tsc --noEmit"
   },
   "packageManager": "pnpm@10.11.0",

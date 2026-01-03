@@ -3,7 +3,7 @@ import fs from "fs/promises";
 export async function listFiles(dir: string) {
   const entries = await fs.readdir(dir, { withFileTypes: true });
   return entries
-    .filter((entry) => entry.isFile())
+    .filter((entry) => entry.isFile() && !entry.name.startsWith("."))
     .map((entry) => entry.name)
     .sort();
 }
