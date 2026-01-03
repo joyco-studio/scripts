@@ -3,9 +3,9 @@
   "private": true,
   "packageManager": "pnpm@10.11.0",
   "scripts": {
-    "changeset": "pnpm -C cli changeset",
-    "version:package": "pnpm -C cli version:package",
-    "release": "pnpm -C cli release"
+    "changeset": "changeset",
+    "version:package": "changeset version",
+    "release": "changeset publish"
   },
   "workspaces": [
     "cli"
