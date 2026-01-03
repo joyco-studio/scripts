@@ -135,7 +135,7 @@ test("pullAgents writes AGENTS.md for each strategy", async (t) => {
       statusText: "OK",
       text: async () => contents,
     };
-  }) as typeof fetch;
+  }) as unknown as typeof fetch;
 
   const strategies = Object.keys(agentStrategies) as AgentStrategy[];
   for (const strategy of strategies) {
@@ -165,7 +165,7 @@ test("pullAgents respects write modes", async (t) => {
       statusText: "OK",
       text: async () => currentContents,
     };
-  }) as typeof fetch;
+  }) as unknown as typeof fetch;
 
   const strategy: AgentStrategy = "codex";
   const filePath = path.resolve(tempDir, agentStrategies[strategy].defaultPath);
