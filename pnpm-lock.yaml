@@ -6,7 +6,9 @@ settings:
 
 importers:
 
-  .:
+  .: {}
+
+  cli:
     dependencies:
       commander:
         specifier: ^12.1.0
