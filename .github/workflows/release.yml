@@ -28,7 +28,7 @@ jobs:
         with:
           node-version: 20
           cache: "pnpm"
-          cache-dependency-path: cli/pnpm-lock.yaml
+          cache-dependency-path: pnpm-lock.yaml
 
       - name: Install Dependencies
         run: pnpm install --frozen-lockfile
@@ -43,6 +43,5 @@ jobs:
           commit: "chore: version package"
           cwd: cli
         env:
-          GITHUB_WORKSPACE: ${{ github.workspace }}/cli
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
