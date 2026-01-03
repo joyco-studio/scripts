@@ -43,5 +43,6 @@ jobs:
           commit: "chore: version package"
           cwd: cli
         env:
+          GITHUB_WORKSPACE: ${{ github.workspace }}/cli
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
