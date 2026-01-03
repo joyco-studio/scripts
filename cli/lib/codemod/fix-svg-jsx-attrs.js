@@ -122,6 +122,7 @@ module.exports = function transformer(file, api) {
     .find(j.JSXElement)
     .filter(isSvgElement)
     .forEach(svgPath => {
+      renameAttrs(svgPath)
       j(svgPath)
         .find(j.JSXElement)
         .forEach(renameAttrs)

@@ -2,11 +2,13 @@
 
 A collection of utility scripts organized by usage pattern.
 
+Note: the legacy `public/` HTTP-linkable scripts are deprecated and removed. Use the pnpx CLI in `packages/cli` instead.
+
 ## 📁 Repository Structure
 
 | Folder | Description | Usage |
 |--------|-------------|-------|
-| [`/public`](./public/) | Image processing scripts | Curl & run via HTTP |
+| [`/packages/cli`](./packages/cli/) | Joyco scripts CLI | Run via pnpx |
 | [`/raycast`](./raycast/) | macOS workflow automation | Copy-paste into Raycast |
 | [`/blender`](./blender/) | 3D export plugins | Install as Blender add-ons |
 
@@ -14,15 +16,13 @@ A collection of utility scripts organized by usage pattern.
 
 ## Quick Links
 
-### [`/public`](./public/) — HTTP-Linkable Scripts
+### [`/packages/cli`](./packages/cli/) — pnpx CLI
 
-Scripts fetched and executed directly via HTTP. Add to `package.json` without cluttering your project.
+Bundled CLI for Joyco utility scripts.
 
-- **`compress.py`** — Batch compress images to WebP
-- **`rename.py`** — Sequential file renaming for image sequences
-- **`resize.py`** — Batch resize by dimensions or scale
+- **`joyco-scripts`** — Run scripts via `pnpx @joycostudio/scripts`
 
-→ [View documentation](./public/)
+→ [View documentation](./packages/cli/)
 
 ---
 
