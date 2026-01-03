@@ -10,6 +10,7 @@ pnpx @joycostudio/scripts compress ./images ./output --quality 80
 pnpx @joycostudio/scripts resize ./images ./output --width 1920 --height 1080
 pnpx @joycostudio/scripts sequence -z 4 ./frames ./output/frame_%n.png
 pnpx @joycostudio/scripts fix-svg src --dry --print
+pnpx @joycostudio/scripts agents -s codex
 ```
 
 For local development, build the CLI before running it directly:

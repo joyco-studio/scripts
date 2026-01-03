@@ -6,6 +6,11 @@ import { compressImagesToWebp } from "../src/core/compress";
 import { resizeImages } from "../src/core/resize";
 import { renameFiles } from "../src/core/rename";
 import {
+  agentStrategies,
+  pullAgents,
+  type AgentStrategy,
+} from "../src/core/agents";
+import {
   cleanupDir,
   createTempDir,
   readImageMetadata,
@@ -111,4 +116,77 @@ test("renameFiles ignores hidden files like .DS_Store", async (t) => {
   const outputs = await fs.readdir(outputDir);
   // Hidden files should not appear in output and should not affect numbering
   assert.deepEqual(outputs.sort(), ["frame_00.txt", "frame_01.txt"].sort());
+});
+
+test("pullAgents writes AGENTS.md for each strategy", async (t) => {
+  const tempDir = await createTempDir();
+  t.after(() => cleanupDir(tempDir));
+
+  const originalFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const contents = "# agents";
+  globalThis.fetch = (async () => {
+    return {
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      text: async () => contents,
+    };
+  }) as typeof fetch;
+
+  const strategies = Object.keys(agentStrategies) as AgentStrategy[];
+  for (const strategy of strategies) {
+    const result = await pullAgents({ strategy, cwd: tempDir });
+    const expectedPath = path.resolve(tempDir, agentStrategies[strategy].defaultPath);
+    assert.equal(result.outputPath, expectedPath);
+    assert.equal(result.bytes, Buffer.byteLength(contents, "utf8"));
+    const stored = await fs.readFile(expectedPath, "utf8");
+    assert.equal(stored, contents);
+  }
+});
+
+test("pullAgents respects write modes", async (t) => {
+  const tempDir = await createTempDir();
+  t.after(() => cleanupDir(tempDir));
+
+  const originalFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  let currentContents = "first";
+  globalThis.fetch = (async () => {
+    return {
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      text: async () => currentContents,
+    };
+  }) as typeof fetch;
+
+  const strategy: AgentStrategy = "codex";
+  const filePath = path.resolve(tempDir, agentStrategies[strategy].defaultPath);
+
+  await pullAgents({ strategy, cwd: tempDir, writeMode: "overwrite" });
+  let stored = await fs.readFile(filePath, "utf8");
+  assert.equal(stored, "first");
+
+  currentContents = "second";
+  await pullAgents({ strategy, cwd: tempDir, writeMode: "append" });
+  stored = await fs.readFile(filePath, "utf8");
+  assert.equal(stored, "first\nsecond");
+
+  currentContents = "third";
+  await pullAgents({ strategy, cwd: tempDir, writeMode: "overwrite" });
+  stored = await fs.readFile(filePath, "utf8");
+  assert.equal(stored, "third");
+
+  currentContents = "fourth";
+  await assert.rejects(
+    () => pullAgents({ strategy, cwd: tempDir, writeMode: "create" }),
+    /EEXIST|exists|already/
+  );
 });
