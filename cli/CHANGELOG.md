@@ -1,5 +1,11 @@
 # @joycostudio/scripts
 
+## 0.0.3
+
+### Patch Changes
+
+- f97b115: Fix sequence command ignoring hidden files like .DS_Store that were messing up file numbering
+
 ## 0.0.2
 
 ### Patch Changes
