@@ -4,6 +4,7 @@ import registerCompress from "./commands/compress";
 import registerSequence from "./commands/sequence";
 import registerResize from "./commands/resize";
 import registerFixSvg from "./commands/fix-svg";
+import registerAgents from "./commands/agents";
 
 const cliName = "scripts";
 const cliDescription = "Joyco utility scripts bundled as a pnpx CLI.";
@@ -12,6 +13,7 @@ const commandRegistrations = [
   registerSequence,
   registerResize,
   registerFixSvg,
+  registerAgents,
 ];
 
 export function buildProgram() {

@@ -104,3 +104,15 @@ test("cli fix-svg prints transformed output", async (t) => {
   assert.equal(result.status, 0);
   assert.match(result.stdout ?? "", /strokeWidth/);
 });
+
+test("cli agents rejects output path when strategy is specified", async (t) => {
+  await ensureBuild();
+  const tempDir = await createTempDir();
+  t.after(() => cleanupDir(tempDir));
+
+  const outputPath = path.join(tempDir, "AGENTS.md");
+  const result = runCli(["agents", outputPath, "-s", "codex"]);
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr ?? "", /either an output path or -s\/--strategy/i);
+});
