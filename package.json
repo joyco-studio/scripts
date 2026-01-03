@@ -5,7 +5,8 @@
   "scripts": {
     "changeset": "changeset",
     "version:package": "changeset version",
-    "release": "changeset publish"
+    "build:cli": "pnpm -C cli build",
+    "release": "pnpm build:cli && changeset publish"
   },
   "workspaces": [
     "cli"
