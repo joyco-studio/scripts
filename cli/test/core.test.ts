@@ -83,3 +83,32 @@ test("renameFiles copies files with zero padding", async (t) => {
   const outputs = await fs.readdir(outputDir);
   assert.deepEqual(outputs.sort(), ["frame_000.txt", "frame_001.txt"].sort());
 });
+
+test("renameFiles ignores hidden files like .DS_Store", async (t) => {
+  const tempDir = await createTempDir();
+  t.after(() => cleanupDir(tempDir));
+
+  const inputDir = path.join(tempDir, "input");
+  const outputDir = path.join(tempDir, "output");
+  await fs.mkdir(outputDir, { recursive: true });
+
+  // Create hidden files that should be ignored
+  await writeTextFile(path.join(inputDir, ".DS_Store"), "garbage");
+  await writeTextFile(path.join(inputDir, ".hidden"), "secret");
+  // Create actual files to be processed
+  await writeTextFile(path.join(inputDir, "a.txt"), "a");
+  await writeTextFile(path.join(inputDir, "b.txt"), "b");
+
+  const result = await renameFiles({
+    srcDir: inputDir,
+    targetPatternWithPath: path.join(outputDir, "frame_%n"),
+    zeroPadding: 2,
+  });
+
+  // Should only process the 2 non-hidden files
+  assert.equal(result.processed, 2);
+
+  const outputs = await fs.readdir(outputDir);
+  // Hidden files should not appear in output and should not affect numbering
+  assert.deepEqual(outputs.sort(), ["frame_00.txt", "frame_01.txt"].sort());
+});
