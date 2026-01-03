@@ -9,5 +9,8 @@
   },
   "workspaces": [
     "cli"
-  ]
+  ],
+  "devDependencies": {
+    "@changesets/cli": "^2.29.8"
+  }
 }
