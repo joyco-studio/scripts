@@ -9,7 +9,7 @@
   "files": [
     "bin/",
     "dist/",
-    "tools/",
+    "lib/",
     "README.md"
   ],
   "keywords": [
@@ -29,6 +29,7 @@
   },
   "scripts": {
     "build": "node esbuild.config.mjs",
+    "test": "node --test -r ts-node/register/transpile-only \"test/**/*.test.ts\"",
     "changeset": "changeset",
     "version:package": "changeset version",
     "release": "changeset publish"
@@ -36,7 +37,6 @@
   "packageManager": "pnpm@10.11.0",
   "dependencies": {
     "commander": "^12.1.0",
-    "fast-glob": "^3.3.2",
     "jscodeshift": "^0.15.2",
     "sharp": "^0.34.3"
   },
@@ -44,6 +44,7 @@
     "@changesets/cli": "^2.27.1",
     "@types/node": "^25.0.3",
     "esbuild": "^0.27.2",
+    "ts-node": "^10.9.2",
     "typescript": "^5.6.3"
   }
 }

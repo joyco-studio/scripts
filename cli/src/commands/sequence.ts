@@ -2,9 +2,9 @@ import { renameFiles } from "../core/rename";
 import type { CommandModule } from "./types";
 
 const definition: CommandModule["definition"] = {
-  name: "rename",
+  name: "sequence",
   summary: "Copy and rename files with sequential numbering.",
-  usage: "scripts rename <src_path> <dest_pattern> [-z <number>]",
+  usage: "scripts sequence <src_path> <dest_pattern> [-z <number>]",
   args: [
     {
       name: "src_path",
@@ -25,7 +25,7 @@ const definition: CommandModule["definition"] = {
       description: "Zero padding width.",
     },
   ],
-  examples: ["scripts rename -z 4 ./frames ./output/frame_%n.png"],
+  examples: ["scripts sequence -z 4 ./frames ./output/frame_%n.png"],
 };
 
 async function handler(

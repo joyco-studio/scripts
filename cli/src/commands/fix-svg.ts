@@ -1,10 +1,9 @@
 import path from "path";
-import fg from "fast-glob";
+import fs from "fs";
 import { spawnSync } from "child_process";
 import type { CommandModule } from "./types";
 
-const pkgRoot = path.resolve(__dirname, "..", "..");
-const scriptsDir = path.join(pkgRoot, "tools");
+const scriptsDir = path.resolve(__dirname, "..", "lib", "codemod");
 
 const definition: CommandModule["definition"] = {
   name: "fix-svg",
@@ -12,7 +11,7 @@ const definition: CommandModule["definition"] = {
   usage: "scripts fix-svg [paths...] [--dry] [--print]",
   args: [
     {
-      name: "paths",
+      name: "paths...",
       required: false,
       description: "Files or directories to process (defaults to current directory).",
     },
@@ -39,41 +38,43 @@ function runCommand(
   args: string[],
   options: { stdio?: "inherit" | "pipe" } = {}
 ) {
-  const result = spawnSync(bin, args, { stdio: "inherit", ...options });
+  const result = spawnSync(bin, args, {
+    stdio: "inherit",
+    encoding: "utf8",
+    ...options,
+  });
   if (result.error) {
     throw result.error;
   }
   if (result.status !== 0) {
     process.exit(result.status ?? 1);
   }
+  return result;
 }
 
-async function handler(paths: string[], options: { dry?: boolean; print?: boolean }) {
-  const targetPaths = paths.length > 0 ? paths : [process.cwd()];
-  const files = await fg(targetPaths, {
-    onlyFiles: true,
-    unique: true,
-    ignore: ["**/node_modules/**"],
-    extglob: true,
-    globstar: true,
-    expandDirectories: {
-      extensions: ["tsx"],
-    },
-  });
-
-  if (files.length === 0) {
-    console.error("No .tsx files found.");
-    process.exit(1);
-  }
-
+async function handler(
+  paths: string[] | string | undefined,
+  options: { dry?: boolean; print?: boolean }
+) {
+  const normalizedPaths = Array.isArray(paths)
+    ? paths
+    : typeof paths === "string"
+      ? [paths]
+      : [];
+  const targetPaths = normalizedPaths.length > 0 ? normalizedPaths : [process.cwd()];
   const transformPath = resolveScript("fix-svg-jsx-attrs.js");
+  if (!fs.existsSync(transformPath)) {
+    throw new Error(`Transform file not found: ${transformPath}`);
+  }
   const jscodeshiftPath = require.resolve("jscodeshift/bin/jscodeshift.js");
   const args = [
     jscodeshiftPath,
     "--parser=tsx",
+    "--extensions=tsx",
+    "--ignore-pattern=**/node_modules/**",
     "-t",
     transformPath,
-    ...files,
+    ...targetPaths,
   ];
 
   if (options.dry) {
@@ -84,7 +85,17 @@ async function handler(paths: string[], options: { dry?: boolean; print?: boolea
     args.push("--print");
   }
 
-  runCommand(process.execPath, args);
+  const stdio = options.print ? "pipe" : "inherit";
+  const result = runCommand(process.execPath, args, { stdio });
+
+  if (options.print) {
+    if (result.stdout) {
+      process.stdout.write(result.stdout);
+    }
+    if (result.stderr) {
+      process.stderr.write(result.stderr);
+    }
+  }
 }
 
 const command: CommandModule = {

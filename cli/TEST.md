@@ -23,11 +23,11 @@ node bin/joyco-scripts.js resize /Users/matiasperez/Desktop/temp/hedra-img-expor
 ```
 
 ```bash
-mkdir -p /Users/matiasperez/Desktop/temp/hedra-img-exports-output-rename
+mkdir -p /Users/matiasperez/Desktop/temp/hedra-img-exports-output-sequence
 ```
 
 ```bash
-node bin/joyco-scripts.js rename -z 4 /Users/matiasperez/Desktop/temp/hedra-img-exports /Users/matiasperez/Desktop/temp/hedra-img-exports-output-rename/frame_%n
+node bin/joyco-scripts.js sequence -z 4 /Users/matiasperez/Desktop/temp/hedra-img-exports /Users/matiasperez/Desktop/temp/hedra-img-exports-output-sequence/frame_%n
 ```
 
 ```bash

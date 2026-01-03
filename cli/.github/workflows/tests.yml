@@ -1,16 +1,14 @@
-name: Publish Any Commit
+name: Tests
 
 on:
   pull_request:
-  push:
-    branches:
-      - main
 
 jobs:
-  build:
+  test:
+    name: Run tests
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
+      - name: Checkout Repo
         uses: actions/checkout@v4
 
       - name: Setup pnpm
@@ -22,10 +20,8 @@ jobs:
           node-version: 20
           cache: "pnpm"
 
-      - name: Install dependencies
+      - name: Install Dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Publish to pkg.pr.new
-        run: pnpx pkg-pr-new publish
-
-
+      - name: Run tests
+        run: pnpm test

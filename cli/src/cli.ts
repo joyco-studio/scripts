@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import packageJson from "../package.json";
 import compressCommand from "./commands/compress";
-import renameCommand from "./commands/rename";
+import sequenceCommand from "./commands/sequence";
 import resizeCommand from "./commands/resize";
 import fixSvgCommand from "./commands/fix-svg";
 import type { CommandModule } from "./commands/types";
@@ -10,7 +10,7 @@ const cliName = "scripts";
 const cliDescription = "Joyco utility scripts bundled as a pnpx CLI.";
 const commands: CommandModule[] = [
   compressCommand,
-  renameCommand,
+  sequenceCommand,
   resizeCommand,
   fixSvgCommand,
 ];
