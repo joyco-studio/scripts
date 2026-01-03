@@ -1,5 +1,11 @@
 # @joycostudio/scripts
 
+## 0.0.4
+
+### Patch Changes
+
+- 67ff754: add new agents command
+
 ## 0.0.3
 
 ### Patch Changes
