@@ -21,11 +21,11 @@ node dist/cli.js --help
 
 ## Adding a new script
 
-1) Add the script file to `packages/cli/tools/`.
-2) Add a new command module in `packages/cli/src/commands/` and wire it into `packages/cli/src/cli.ts`.
-3) Keep command logic in `packages/cli/src/core/` so it can be unit tested without spawning the CLI.
+1) Add or update the core logic in `src/core/` so it can be unit tested without spawning the CLI.
+2) Create a new command module in `src/commands/` that exports a `register(program)` function.
+3) Wire the new command into `src/cli.ts` by adding it to the registrations list.
 
-Keeping the command definitions in `packages/cli/src/commands/` ensures the CLI help output stays consistent.
+Commands own their Commander configuration directly (args/options/help/examples), so you can use full Commander features when needed.
 
 ## 🦋 Version Management
 
