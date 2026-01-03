@@ -1,14 +1,19 @@
-name: Tests
+name: Publish Any Commit
 
 on:
   pull_request:
+  push:
+    branches:
+      - main
 
 jobs:
-  test:
-    name: Run tests
+  build:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cli
     steps:
-      - name: Checkout Repo
+      - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Setup pnpm
@@ -19,9 +24,11 @@ jobs:
         with:
           node-version: 20
           cache: "pnpm"
+          cache-dependency-path: cli/pnpm-lock.yaml
 
-      - name: Install Dependencies
+      - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Run tests
-        run: pnpm test
+      - name: Publish to pkg.pr.new
+        run: pnpx pkg-pr-new publish
+
