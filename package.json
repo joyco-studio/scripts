@@ -6,6 +6,7 @@
     "changeset": "changeset",
     "version:package": "changeset version",
     "build:cli": "pnpm -C cli build",
+    "test:cli": "pnpm -C cli test",
     "release": "pnpm build:cli && changeset publish"
   },
   "workspaces": [
