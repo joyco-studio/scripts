@@ -1,5 +1,11 @@
 # @joycostudio/scripts
 
+## 0.0.5
+
+### Patch Changes
+
+- 65e1586: update cursor output dir
+
 ## 0.0.4
 
 ### Patch Changes
