@@ -13,8 +13,8 @@ export const agentStrategies = {
     description: "Claude Code reads CLAUDE.md from the project root.",
   },
   cursor: {
-    defaultPath: path.join(".cursor", "rules", "AGENTS.md"),
-    description: "Cursor reads Markdown rules from .cursor/rules/.",
+    defaultPath: "AGENTS.md",
+    description: "Cursor reads AGENTS.md from the project root.",
   },
 } as const;
 
