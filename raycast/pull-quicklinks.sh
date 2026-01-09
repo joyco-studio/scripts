@@ -9,12 +9,12 @@
 # @raycast.icon 🔗
 # @raycast.packageName JOYCO Developer Tools
 
-# Pull quicklinks.json from registry and save with timestamp
+# Pull quicklinks.json from hub and save with timestamp
 
 DATE=$(date +"%m-%d-%Y")
 OUTPUT_FILE="$HOME/Downloads/quicklinks-pull-${DATE}.json"
 
-curl -s "https://registry.joyco.studio/quicklinks.json" -o "$OUTPUT_FILE"
+curl -sL "https://hub.joyco.studio/quicklinks.json" -o "$OUTPUT_FILE"
 
 if [ $? -eq 0 ] && [ -s "$OUTPUT_FILE" ]; then
     LINK_COUNT=$(jq 'length' "$OUTPUT_FILE" 2>/dev/null)
