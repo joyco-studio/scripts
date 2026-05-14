@@ -17,6 +17,9 @@ if [ -z "$INPUT" ]; then
   exit 1
 fi
 
+INPUT="${INPUT/#\~/$HOME}"
+INPUT=$(printf '%s' "$INPUT" | envsubst)
+
 if [ -f "$INPUT" ]; then
   CONTENT=$(cat "$INPUT")
   FILENAME=$(basename "$INPUT")
