@@ -139,8 +139,10 @@ test("pullAgents writes AGENTS.md for each strategy", async (t) => {
 
   const strategies = Object.keys(agentStrategies) as AgentStrategy[];
   for (const strategy of strategies) {
-    const result = await pullAgents({ strategy, cwd: tempDir });
-    const expectedPath = path.resolve(tempDir, agentStrategies[strategy].defaultPath);
+    // Strategies may share a default path (e.g. AGENTS.md), so isolate each one.
+    const cwd = path.join(tempDir, strategy);
+    const result = await pullAgents({ strategy, cwd });
+    const expectedPath = path.resolve(cwd, agentStrategies[strategy].defaultPath);
     assert.equal(result.outputPath, expectedPath);
     assert.equal(result.bytes, Buffer.byteLength(contents, "utf8"));
     const stored = await fs.readFile(expectedPath, "utf8");
