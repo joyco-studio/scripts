@@ -25,6 +25,22 @@ Copies your local private IP address to clipboard. Useful for sharing your dev s
 
 ---
 
+### `cold-open.sh` 🧊
+
+Opens a URL in Chrome with a true cold load: quits Chrome, wipes the Metal shader cache for Chrome's GPU helper, and launches the URL in a fresh temporary profile (no cache, no extensions, no compiled shaders).
+
+**Usage:** Run from Raycast and enter the URL (scheme optional). Include any query params directly in the URL.
+
+```
+> Cold Open
+> Enter url: foo.vercel.app?timings
+→ "Opened https://foo.vercel.app?timings (profile: /var/folders/.../tmp.XXXX)"
+```
+
+> ⚠️ Quits all open Chrome windows.
+
+---
+
 ### `killport.sh` 💀
 
 Kill a process running on a specific port. No more hunting for PIDs.
