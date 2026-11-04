@@ -41,6 +41,33 @@ Opens a URL in Chrome with a true cold load: quits Chrome, wipes the Metal shade
 
 ---
 
+### `gpu-trace.sh` 🎞️
+
+Records a startup performance trace with the GPU/compositor categories DevTools hides by default. It launches a separate Chrome instance in a fresh temporary profile with `--trace-config-file=trace-config.json`, records the first N seconds after launch, and saves the trace to `~/Downloads`. Open the file in DevTools → Performance → Load profile.
+
+The categories and buffer mode come from [`trace-config.json`](./trace-config.json), which is checked in next to the script, so every run uses the same config. Each run writes to a timestamped copy of the config, so the original never changes.
+
+**Usage:** Run from Raycast and enter the URL (scheme optional; `localhost` gets `http://`). The seconds argument is optional and overrides `startup_duration` (default 10).
+
+```
+> GPU Trace
+> Enter url: localhost:3000   seconds: 5
+→ "Saved 5s trace to ~/Downloads/gpu-trace-2026-11-04-191158.json"
+```
+
+Equivalent manual launch:
+
+```bash
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  --user-data-dir=/tmp/chrome-trace \
+  --trace-config-file=$PWD/trace-config.json \
+  http://localhost:3000
+```
+
+> ⚠️ Recording only covers startup: it starts when Chrome launches and stops after `startup_duration`. You can't use it to trace a moment you pick later; use the DevTools Performance panel for that. Your regular Chrome stays open.
+
+---
+
 ### `killport.sh` 💀
 
 Kill a process running on a specific port. No more hunting for PIDs.

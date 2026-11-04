@@ -1,0 +1,18 @@
+{
+  "trace_config": {
+    "record_mode": "record-until-full",
+    "included_categories": [
+      "devtools.timeline",
+      "disabled-by-default-devtools.timeline",
+      "disabled-by-default-devtools.timeline.frame",
+      "gpu",
+      "viz",
+      "cc",
+      "blink",
+      "v8.execute",
+      "toplevel"
+    ]
+  },
+  "startup_duration": 10,
+  "result_file": "/tmp/gpu-trace.json"
+}
