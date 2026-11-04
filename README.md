@@ -32,7 +32,7 @@ Copy-paste scripts for [Raycast](https://raycast.com/) workflow integration.
 
 - **`get-ip.sh`** 🌍 — Copy local IP to clipboard
 - **`killport.sh`** 💀 — Kill process on a port
-- **`gpu-trace.sh`** 🎞️ — Record a startup Chrome trace with GPU categories
+- **`gpu-trace.sh`** 🎞️ — Record a startup Chrome trace with GPU categories, open it in Perfetto, and summarize it for AI agents
 
 → [View documentation](./raycast/)
 

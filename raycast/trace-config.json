@@ -10,7 +10,8 @@
       "cc",
       "blink",
       "v8.execute",
-      "toplevel"
+      "toplevel",
+      "disabled-by-default-v8.cpu_profiler"
     ]
   },
   "startup_duration": 10,
