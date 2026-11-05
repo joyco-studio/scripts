@@ -158,7 +158,7 @@ def main():
         emit(ap.format_help())
         os._exit(0)
     try:
-        a = ap.parse_args(argv)
+        a = ap.parse_intermixed_args(argv)
     except SystemExit as e:  # argparse already printed the error to stderr
         emit("")
         os._exit(e.code or 1)

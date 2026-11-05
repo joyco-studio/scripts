@@ -319,20 +319,17 @@ def current_density(obj, geo):
 # ----------------------------------------------------------------------------- cameras
 
 def camera_settings(cam, props):
-    """Per-camera overrides from custom properties (crop and active can be animated).
+    """Per-camera overrides from custom properties (tc_active can be animated).
 
     tc_res        (w, h) output pixels for this camera, overrides the panel resolution
     tc_hide       comma-separated object names this camera never renders
-    tc_crop_left / tc_crop_right / tc_crop_bottom / tc_crop_top
-                  0-1 share of the frame covered by something else (e.g. a scrolling section)
     tc_active     0 skips this camera on the current frame
     tc_labels     JSON {frame: label} used in the report's "driven by" lines
     """
     res = cam.get("tc_res")
     res = (int(res[0]), int(res[1])) if res is not None else (props.res_x, props.res_y)
     hide = frozenset(n.strip() for n in str(cam.get("tc_hide", "")).split(",") if n.strip())
-    crop = tuple(float(cam.get(f"tc_crop_{k}", 0.0)) for k in ("left", "right", "bottom", "top"))
-    return dict(res=res, hide=hide, crop=crop, active=float(cam.get("tc_active", 1.0)) > 0.5)
+    return dict(res=res, hide=hide, active=float(cam.get("tc_active", 1.0)) > 0.5)
 
 
 def sample_label(cam, frame):
@@ -344,13 +341,8 @@ def sample_label(cam, frame):
 
 
 def framed_camera(cam, scene, cs):
-    """camera_model at the camera's own resolution with its crop applied; None if nothing shows."""
-    cm = camera_model(cam, scene, *cs["res"])
-    w, h = cm["xmax"] - cm["xmin"], cm["ymax"] - cm["ymin"]
-    cl, cr, cb, ct = cs["crop"]
-    cm["xmin"], cm["xmax"] = cm["xmin"] + cl * w, cm["xmax"] - cr * w
-    cm["ymin"], cm["ymax"] = cm["ymin"] + cb * h, cm["ymax"] - ct * h
-    return cm if cm["xmax"] > cm["xmin"] and cm["ymax"] > cm["ymin"] else None
+    """camera_model at the camera's own resolution."""
+    return camera_model(cam, scene, *cs["res"])
 
 
 def build_bvh(geos_all, names):
@@ -615,8 +607,6 @@ def _analyze(context, props):
             if not cs["active"]:
                 continue
             cm = framed_camera(cam, scene, cs)
-            if cm is None:
-                continue
             sample = len(labels)
             labels.append(sample_label(cam, f))
             if props.occlusion and cs["hide"] not in bvhs:

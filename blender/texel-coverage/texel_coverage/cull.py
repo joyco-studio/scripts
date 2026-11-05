@@ -135,8 +135,6 @@ def pixel_visibility(context, props, objs, frames, cams, movers=(), scale=1.0):
                 img.pixels.foreach_get(px)
                 bpy.data.images.remove(img)
                 px = px.reshape(h, w, 4)
-                cl, cr, cb, ct = cs["crop"]  # rows start at the bottom
-                px = px[int(h * cb): h - int(h * ct), int(w * cl): w - int(w * cr)]
                 q = np.rint(px * 255).astype(np.int64)
                 ids = np.unique(((q[..., 0] << 16) | (q[..., 1] << 8) | q[..., 2])[q[..., 3] > 0])
                 ids = ids[ids > 0]
@@ -249,8 +247,6 @@ def _compute(context, props):
             if not cs["active"]:
                 continue
             cm = core.framed_camera(cam, scene, cs)
-            if cm is None:
-                continue
             if cs["hide"] not in bvhs:
                 names = [o.name for o in occ if o.name not in cs["hide"]]
                 bvhs[cs["hide"]] = core.build_bvh(geos, names) if names else None
@@ -392,9 +388,7 @@ def verify(context, props, nudge=True, max_w=480):
         img = bpy.data.images.load(path, check_existing=False)
         a = np.array(img.pixels[:], np.float32).reshape(img.size[1], img.size[0], 4)[:, :, :3]
         bpy.data.images.remove(img)
-        h, w = a.shape[:2]
-        cl, cr, cb, ct = cs["crop"]
-        return a[int(h * cb): h - int(h * ct), int(w * cl): w - int(w * cr)]
+        return a
 
     results = []
     tmp = None
