@@ -1,0 +1,14 @@
+schema_version = "1.0.0"
+
+id = "texel_coverage"
+version = "0.2.0"
+name = "Texel Coverage"
+tagline = "Size textures, lay out UVs and cull geometry from the cameras that see them"
+maintainer = "JOYCO"
+type = "add-on"
+tags = ["UV", "Import-Export", "Mesh"]
+blender_version_min = "4.2.0"
+license = ["SPDX:GPL-3.0-or-later"]
+
+[permissions]
+files = "Writes export reports next to the exported GLB and runs the camera rig script you choose"
