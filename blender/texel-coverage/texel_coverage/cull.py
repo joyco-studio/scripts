@@ -97,7 +97,8 @@ def pixel_visibility(context, props, objs, frames, cams, movers=(), scale=1.0):
         touched.append((me, ca.active_color_name, ca.render_color_index))
         ca.active_color = a
         ca.render_color_index = ca.find("tc_id")
-    path = os.path.join(tempfile.gettempdir(), "tc_id.exr")
+    tmpdir = tempfile.mkdtemp(prefix="texel_")  # private per run: parallel sessions can't clash
+    path = os.path.join(tmpdir, "tc_id.exr")
     try:
         try:
             r.engine = "BLENDER_WORKBENCH"
@@ -121,15 +122,17 @@ def pixel_visibility(context, props, objs, frames, cams, movers=(), scale=1.0):
                     continue
                 hide = [scene.objects[n] for n in set(cs["hide"]) | set(movers) if n in scene.objects]
                 prev = [o.hide_render for o in hide]
-                for o in hide:
-                    o.hide_render = True
                 scene.camera = cam
                 w, h = (max(1, round(v * scale)) for v in cs["res"])
                 r.resolution_x, r.resolution_y, r.resolution_percentage = w, h, 100
-                bpy.ops.render.render()
-                bpy.data.images["Render Result"].save_render(path)
-                for o, p in zip(hide, prev):
-                    o.hide_render = p
+                try:
+                    for o in hide:
+                        o.hide_render = True
+                    bpy.ops.render.render()
+                    bpy.data.images["Render Result"].save_render(path)
+                finally:
+                    for o, p in zip(hide, prev):
+                        o.hide_render = p
                 img = bpy.data.images.load(path, check_existing=False)
                 px = np.empty(w * h * 4, np.float32)
                 img.pixels.foreach_get(px)
@@ -143,6 +146,8 @@ def pixel_visibility(context, props, objs, frames, cams, movers=(), scale=1.0):
                     sel = ids[(k == j)] - b0
                     seen[name][sel[sel < len(seen[name])]] = True
     finally:
+        import shutil
+        shutil.rmtree(tmpdir, ignore_errors=True)
         r.engine = saved["engine"]
         r.resolution_x, r.resolution_y, r.resolution_percentage = saved["res"]
         r.film_transparent, r.dither_intensity, scene.camera = saved["film"], saved["dither"], saved["cam"]
@@ -334,8 +339,10 @@ def add_modifiers(context, props):
             m = o.modifiers.new(CULL_MOD, "NODES")
             m.node_group = ng
             changes.append([o.name, "added"])
-        elif not (m.show_render and m.show_viewport):
-            changes.append([o.name, "enabled", m.show_viewport, m.show_render])
+        else:
+            idx = o.modifiers.find(CULL_MOD)
+            if not (m.show_render and m.show_viewport) or idx != len(o.modifiers) - 1:
+                changes.append([o.name, "enabled", m.show_viewport, m.show_render, idx])
         m.show_render = m.show_viewport = True
         o.modifiers.move(o.modifiers.find(CULL_MOD), len(o.modifiers) - 1)  # always last
     return changes
@@ -351,6 +358,8 @@ def undo_modifiers(changes):
             o.modifiers.remove(m)
         else:
             m.show_viewport, m.show_render = entry[2], entry[3]
+            if len(entry) > 4:  # back to the artist's stack position
+                o.modifiers.move(o.modifiers.find(CULL_MOD), min(entry[4], len(o.modifiers) - 1))
 
 
 def remove_modifiers(context):
@@ -386,7 +395,8 @@ def verify(context, props, nudge=True, max_w=480):
     saved = (r.engine, scene.camera, r.resolution_x, r.resolution_y, r.resolution_percentage, scene.frame_current,
              sh.light, sh.color_type, sh.show_cavity, sh.show_object_outline, scene.display.render_aa,
              scene.view_settings.view_transform)
-    path = os.path.join(tempfile.gettempdir(), "tc_verify.png")
+    tmpdir = tempfile.mkdtemp(prefix="texel_")
+    path = os.path.join(tmpdir, "tc_verify.png")
     mods = [o.modifiers[CULL_MOD] for o in scene.objects if o.type == "MESH" and CULL_MOD in o.modifiers]
 
     def render(cam, cs):
@@ -441,19 +451,25 @@ def verify(context, props, nudge=True, max_w=480):
                         test = tmp
                     hide = [scene.objects[n] for n in cs["hide"] if n in scene.objects]
                     prev = [o.hide_render for o in hide]
-                    for o in hide:
-                        o.hide_render = True
-                    for m in mods:
-                        m.show_render = False
-                    a = render(test, cs)
-                    for m in mods:
-                        m.show_render = True
-                    b = render(test, cs)
-                    for o, p in zip(hide, prev):
-                        o.hide_render = p
+                    try:
+                        for o in hide:
+                            o.hide_render = True
+                        for m in mods:
+                            m.show_render = False
+                        a = render(test, cs)
+                        for m in mods:
+                            m.show_render = True
+                        b = render(test, cs)
+                    finally:
+                        for m in mods:
+                            m.show_render = True
+                        for o, p in zip(hide, prev):
+                            o.hide_render = p
                     diff = int((np.abs(a - b).max(axis=2) > 1e-3).sum())
                     results.append((label + suffix, diff, a.shape[1]))
     finally:
+        import shutil
+        shutil.rmtree(tmpdir, ignore_errors=True)
         if tmp is not None:
             bpy.data.objects.remove(tmp)
         undo_modifiers(changes)

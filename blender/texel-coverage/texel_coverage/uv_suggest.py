@@ -127,11 +127,18 @@ def suggest(context, props, only=None):
 
     if context.mode != "OBJECT":
         bpy.ops.object.mode_set(mode="OBJECT")
-    objs, meshes = [], set()
-    for o in sorted(core.target_objects(context), key=lambda o: o.name):
-        if "tc_required" in o.data.attributes and o.data.name not in meshes:  # linked duplicates: once per mesh
-            meshes.add(o.data.name)
-            objs.append(o)
+    copies = {}  # linked duplicates share one mesh (and one UV map): lay it out once
+    for o in core.target_objects(context):
+        if "tc_required" in o.data.attributes:
+            copies.setdefault(o.data.name, []).append(o)
+    objs, alias = [], {}
+    for group in copies.values():
+        # the largest copy sets the size: tc_required is the highest need of any copy in px/m,
+        # and the biggest copy needs the most texels for the same px/m
+        rep = min(group, key=lambda o: (-abs(o.matrix_world.to_3x3().determinant()), o.name))
+        objs.append(rep)
+        alias[rep.name] = {o.name for o in group}
+    objs.sort(key=lambda o: o.name)
     by_key = {}  # image -> {(object, uv map): material slots}
     for o in objs:
         for slot, g in enumerate(core.face_groups(o)):
@@ -139,7 +146,7 @@ def suggest(context, props, only=None):
                 by_key.setdefault(g[2], {}).setdefault((o.name, g[1]), set()).add(slot)
     if only is not None:
         only = set(only)
-        by_key = {k: v for k, v in by_key.items() if only & {m[0] for m in v}}
+        by_key = {k: v for k, v in by_key.items() if only & set().union(*(alias[m[0]] for m in v))}
     summaries, cuts = [], {}
     for key in sorted(by_key):
         summaries.append(_suggest_key(context, props, key, by_key[key], bmesh, bmesh_linked_uv_islands, cuts))
@@ -359,8 +366,9 @@ def select_cuts(context):
     return n
 
 
-def promote(context, objs):
-    """Copy each suggested map into the UV map it was made from. A backup is kept."""
+def promote(context, objs, layouts=None):
+    """Copy each suggested map into the UV map it was made from. A backup is kept.
+    `layouts`: only these (mesh name, uv map) pairs (None = every suggested map)."""
     if context.mode != "OBJECT":
         bpy.ops.object.mode_set(mode="OBJECT")
     done, meshes = [], set()
@@ -373,7 +381,7 @@ def promote(context, objs):
             if not layer.name.endswith(SUFFIX):
                 continue
             src = layer.name[: -len(SUFFIX)]
-            if src not in me.uv_layers:
+            if src not in me.uv_layers or (layouts is not None and (me.name, src) not in layouts):
                 continue
             a = np.empty(len(me.loops) * 2, np.float32)
             me.uv_layers[src].data.foreach_get("uv", a)
