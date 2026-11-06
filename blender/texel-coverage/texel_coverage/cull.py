@@ -208,9 +208,14 @@ def compute(context, props):
     t0 = time.time()
     with core.cull_paused(context):
         keep, samples = _compute(context, props)
-    stats = {}
+    by_mesh = {}  # linked duplicates share one mesh: keep a face if any of its objects needs it
     for name, mask in keep.items():
         me = bpy.data.objects[name].data
+        by_mesh[me.name] = by_mesh[me.name] | mask if me.name in by_mesh else mask.copy()
+    stats = {}
+    for name in keep:
+        me = bpy.data.objects[name].data
+        mask = by_mesh[me.name]
         core.set_attr(me, CULL_ATTR, mask, "BOOLEAN")
         me.update()
         stats[name] = [int(mask.sum()), len(mask)]
@@ -231,8 +236,11 @@ def _compute(context, props):
     objs = [o for o in everything if not skipped(o, skip)]
     occ = [o for o in everything if not rigged(o)]  # moving rigs never hide anything
     cams = [c for c in core.cameras_of(context, props)]
+    if not cams:
+        raise RuntimeError("No cameras to cull from (check the Cameras setting); refusing to cull everything")
     frames = core.frames_of(scene, props)
     frame0 = scene.frame_current
+    moments = 0
     seen = {o.name: np.zeros(len(o.data.polygons), bool) for o in objs}
     shift_of = {o.name: float(o.get("tc_cull_shift", cp["shift"])) for o in objs}
     shifts = sorted(set(shift_of.values()))
@@ -247,6 +255,7 @@ def _compute(context, props):
             if not cs["active"]:
                 continue
             cm = core.framed_camera(cam, scene, cs)
+            moments += 1
             if cs["hide"] not in bvhs:
                 names = [o.name for o in occ if o.name not in cs["hide"]]
                 bvhs[cs["hide"]] = core.build_bvh(geos, names) if names else None
@@ -257,6 +266,8 @@ def _compute(context, props):
                     for o in members:
                         seen[o.name] |= core.face_visibility(geos[o.name], c, bvhs[cs["hide"]], o.name)[0]
     scene.frame_set(frame0)
+    if not moments:
+        raise RuntimeError("No active camera moments (every camera has tc_active off); refusing to cull everything")
     if cp["pixel"]:
         movers = [o.name for o in scene.objects if o.type == "MESH" and rigged(o)]
         px_seen = pixel_visibility(context, props, objs, frames, cams, movers, cp["pixel_scale"])

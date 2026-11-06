@@ -105,6 +105,16 @@ class TC_Props(bpy.types.PropertyGroup):
         ("REFRESH", "Re-analyze", "Re-run the analysis and the cull before exporting (slow on big scenes)"),
         ("SKIP", "Export Unoptimized", "Export as-is and say so in the report")])
     export_report: bpy.props.BoolProperty(name="Write Report Next to GLB", default=True)
+    export_compress: bpy.props.BoolProperty(
+        name="Compress with Chopper", default=False,
+        description="After each GLB export, also write <name>.compressed.glb with chopper, the same "
+                    "compression the site pipeline runs, so you see the final size")
+    chopper_path: bpy.props.StringProperty(
+        name="Chopper Project", subtype="DIR_PATH",
+        description="A project folder with chopper installed (node_modules/.bin/chopper), "
+                    "e.g. the website repo")
+    chopper_recipe: bpy.props.StringProperty(name="Recipe", subtype="FILE_PATH",
+                                             description="Optional chopper recipe file")
     verify_nudge: bpy.props.BoolProperty(name="Also Test Nudged Cameras", default=True)
 
 
@@ -612,6 +622,22 @@ def draw_export_options(layout, p):
     row.prop(p, "export_max_size", text="Max")
     sub.prop(p, "export_stale", text="If Stale")
     sub.prop(p, "export_report", text="Write Report")
+    draw_compress(col, p)
+
+
+def draw_compress(layout, p):
+    layout.prop(p, "export_compress")
+    if not p.export_compress:
+        return
+    c = layout.column(align=True)
+    c.prop(p, "chopper_path", text="Chopper")
+    c.prop(p, "chopper_recipe", text="Recipe")
+    if not p.chopper_path:
+        layout.label(text="Pick a folder with chopper installed", icon="ERROR")
+    st = export.COMPRESS
+    if st["state"]:
+        icon = {"ok": "CHECKMARK", "running": "SORTTIME", "error": "ERROR"}[st["state"]]
+        layout.label(text=st["text"], icon=icon)
 
 
 class TC_PT_export(bpy.types.Panel):
@@ -661,6 +687,7 @@ def draw_gltf_export(context, layout):
         row.prop(p, "export_max_size", text="Max")
         sub.prop(p, "export_stale", text="")
         sub.prop(p, "export_report", text="Write report")
+        draw_compress(body, p)
         _status_row(sub, "Analysis", st["analysis"])
         _status_row(sub, "Cull", st["cull"])
         if p.export_enabled and (p.export_cull or p.export_triangulate):

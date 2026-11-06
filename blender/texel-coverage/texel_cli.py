@@ -123,6 +123,8 @@ def run(a, api):
             r = api.export_glb(context, a.out, col, a.chopper, a.recipe)
         else:
             r = api.restore(context)
+        if not r["ok"]:
+            code = max(code, 1)  # a failed action; checks that failed already set 2
         results.append(r)
     if a.save or a.save_as:
         api.restore(context)  # never save temporary export state

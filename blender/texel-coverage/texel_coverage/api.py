@@ -43,6 +43,7 @@ SETTING_KEYS = (
     "suggest_fill", "suggest_snap", "cull_preset", "cull_shift", "cull_overscan", "cull_rings",
     "cull_distance", "cull_pixel", "cull_pixel_scale", "cull_skip", "export_enabled", "export_cull",
     "export_resize", "export_triangulate", "export_max_size", "export_min_size", "export_stale", "export_report",
+    "export_compress", "chopper_path", "chopper_recipe",
 )
 
 
@@ -239,6 +240,8 @@ def verify(context, nudge=True, max_diff_px=0):
     if core.cache_status(context, p, force=True)["cull"] == "none":
         raise TexelError("nothing to verify: run `cull` first")
     res = cull.verify(context, p, nudge=nudge)
+    if not res:
+        raise TexelError("no active camera moments to verify against")
     worst = max((r[1] for r in res), default=0)
     bad = [r for r in res if r[1] > 0]
     lines = [f"VERIFY CULL: {len(res)} renders compared, {len(bad)} with differences", ""]
@@ -268,18 +271,15 @@ def export_glb(context, out, collection=None, chopper=None, recipe=None):
                 cull={k: dict(kept=v[0], total=v[1]) for k, v in sorted((state or {}).get("cull", {}).items())},
                 report=body)
     warnings = []
+    if chopper is None and p.export_compress and p.chopper_path:
+        chopper, recipe = p.chopper_path, recipe or p.chopper_recipe  # the file's own setting
     if chopper:
-        import subprocess
-        target = os.path.splitext(out)[0] + ".compressed.glb"
-        cmd = [os.path.join(chopper, "node_modules", ".bin", "chopper"), "optimize", out, target]
-        if recipe:
-            cmd += ["--recipe", recipe]
-        r = subprocess.run(cmd, cwd=chopper, capture_output=True, text=True)
-        if r.returncode:
-            warnings.append(f"chopper failed: {r.stderr.strip()[-400:]}")
-        else:
-            data.update(compressed=target, compressed_bytes=os.path.getsize(target))
-    msg = f"exported {out} ({data['bytes'] / 2**20:.1f} MB" + (
+        try:
+            data.update(export.compress(out, chopper, recipe or ""))
+        except RuntimeError as e:
+            warnings.append(str(e))
+    plain = p.export_enabled and not data["optimized"]
+    msg = ("exported WITHOUT optimizing (see log) " if plain else "exported ") + f"{out} ({data['bytes'] / 2**20:.1f} MB" + (
         f", compressed {data['compressed_bytes'] / 2**20:.2f} MB" if "compressed" in data else "") + ")"
     return _result("export", data["optimized"] or not p.export_enabled, msg, data, t0, context, warnings)
 

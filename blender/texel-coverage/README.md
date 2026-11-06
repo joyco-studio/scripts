@@ -34,6 +34,8 @@ The extension hooks the stock glTF exporter (`glTF2_pre_export_callback` / `glTF
 4. lets the exporter run (Apply Modifiers forced on),
 5. restores everything and writes `<name>.texel.md` / `.texel.json` next to the GLB.
 
+**Compress with Chopper** (Export section and the glTF dialog) also writes `<name>.compressed.glb` with chopper, the compressor the site pipeline uses, so you see the final size. Point **Chopper** at a project with chopper installed (`node_modules/.bin/chopper`, e.g. the website repo); it runs in the background after the GLB is written and the sizes show in the panel and the report. The command line uses the same setting, or `--chopper PATH` for one run.
+
 Temporary images and stashed UV maps are tagged, so **Restore** (or reopening the file) recovers from an export that crashed halfway.
 
 ## Command line (people and agents)

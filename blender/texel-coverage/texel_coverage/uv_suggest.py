@@ -83,7 +83,11 @@ def shelf_pack(sizes, obstacles, margin):
             return None
         while True:
             if x + w + margin > 1:
-                x, y, row = margin, y + max(row, margin) + margin, 0.0
+                step = max(row, margin) + margin
+                if step <= 1e-9:  # zero margin and nothing placed in this row: jump past what blocks it
+                    tops = [o[3] for o in obstacles if o[1] < y + h + margin and o[3] + margin > y]
+                    step = max((min(tops) - y) if tops else h, 1e-6)
+                x, y, row = margin, y + step, 0.0
             if y + h + margin > 1:
                 return None
             hit = next((o for o in obstacles if x < o[2] + margin and x + w + margin > o[0]
@@ -123,27 +127,34 @@ def suggest(context, props, only=None):
 
     if context.mode != "OBJECT":
         bpy.ops.object.mode_set(mode="OBJECT")
-    objs = [o for o in core.target_objects(context) if "tc_required" in o.data.attributes]
-    by_key = {}
+    objs, meshes = [], set()
+    for o in sorted(core.target_objects(context), key=lambda o: o.name):
+        if "tc_required" in o.data.attributes and o.data.name not in meshes:  # linked duplicates: once per mesh
+            meshes.add(o.data.name)
+            objs.append(o)
+    by_key = {}  # image -> {(object, uv map): material slots}
     for o in objs:
         for slot, g in enumerate(core.face_groups(o)):
             if g:
-                by_key.setdefault(g[2], {}).setdefault(o.name, (g[1], set()))[1].add(slot)
+                by_key.setdefault(g[2], {}).setdefault((o.name, g[1]), set()).add(slot)
     if only is not None:
         only = set(only)
-        by_key = {k: v for k, v in by_key.items() if only & set(v)}
-    summaries = []
+        by_key = {k: v for k, v in by_key.items() if only & {m[0] for m in v}}
+    summaries, cuts = [], {}
     for key in sorted(by_key):
-        summaries.append(_suggest_key(context, props, key, by_key[key], bmesh, bmesh_linked_uv_islands))
+        summaries.append(_suggest_key(context, props, key, by_key[key], bmesh, bmesh_linked_uv_islands, cuts))
+    for name, cut in cuts.items():  # proposed cuts of every texture on the mesh, written once
+        me = bpy.data.objects[name].data
+        core.set_attr(me, CUT_ATTR, cut, "BOOLEAN", "EDGE")
+        me.update()
     return summaries
 
 
-def _suggest_key(context, props, key, members, bmesh, linked_islands):
+def _suggest_key(context, props, key, members, bmesh, linked_islands, cuts):
     pieces, obstacles, writes = [], [], []
     prev = context.scene.get("tc_suggest_sizes", {})
     prev_size = int(prev.get(key, 0)) if hasattr(prev, "get") else 0
-    for oname in sorted(members):
-        uvname, slots = members[oname]
+    for (oname, uvname), slots in sorted(members.items()):
         o = bpy.data.objects[oname]
         me = o.data
         dst = uvname + SUFFIX
@@ -172,7 +183,7 @@ def _suggest_key(context, props, key, members, bmesh, linked_islands):
         bm.from_mesh(me)
         bm.faces.ensure_lookup_table()
         src_layer = bm.loops.layers.uv[uvname]
-        cut = np.zeros(len(me.edges), bool)
+        cut = cuts.setdefault(oname, np.zeros(len(me.edges), bool))
         for isl in linked_islands(bm, src_layer):
             faces = [f for f in isl if in_key[f.index]]
             if not faces:
@@ -204,11 +215,10 @@ def _suggest_key(context, props, key, members, bmesh, linked_islands):
                 need = core.wquantile(r[seen], w[seen], 0.98) if seen.any() else 0.0
                 uvA = abs(_poly_area(uv, lt[idx]))
                 cur = math.sqrt(uvA / max(w.sum(), 1e-12))  # uv units per metre
-                pieces.append(dict(obj=oname, first=int(idx[0]), loops=loops, uv=uv, need=need,
+                pieces.append(dict(obj=oname, dst=dst, first=int(idx[0]), loops=loops, uv=uv, need=need,
                                    area=float(w.sum()), cur=cur))
         bm.free()
         writes.append((o, dst, dst_uv))
-        core.set_attr(me, CUT_ATTR, cut, "BOOLEAN", "EDGE")
 
     if not pieces:
         return dict(texture=key, size=prev_size, pieces=0, locked=len(obstacles),
@@ -261,9 +271,9 @@ def _suggest_key(context, props, key, members, bmesh, linked_islands):
     pos = attempt(size, grow)
     if pos is None:
         return dict(texture=key, size=size, pieces=len(pieces), note="does not fit; unlock islands or lower the margin")
-    by_obj = {o.name: (o, dst, uv) for o, dst, uv in writes}
+    by_map = {(o.name, dst): uv for o, dst, uv in writes}
     for p, (x, y) in zip(pieces, pos):
-        _, _, uv = by_obj[p["obj"]]
+        uv = by_map[(p["obj"], p["dst"])]
         uv[p["loops"]] = p["texels"] * grow / size + np.array([x, y])
     for o, dst, uv in writes:
         o.data.uv_layers[dst].data.foreach_set("uv", uv.astype(np.float32).ravel())
@@ -353,9 +363,12 @@ def promote(context, objs):
     """Copy each suggested map into the UV map it was made from. A backup is kept."""
     if context.mode != "OBJECT":
         bpy.ops.object.mode_set(mode="OBJECT")
-    done = []
+    done, meshes = [], set()
     for o in objs:
         me = o.data
+        if me.name in meshes:  # linked duplicate: a second pass would back up the promoted UVs
+            continue
+        meshes.add(me.name)
         for layer in list(me.uv_layers):
             if not layer.name.endswith(SUFFIX):
                 continue

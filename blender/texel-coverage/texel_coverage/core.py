@@ -144,6 +144,33 @@ def uv_of_image_node(node):
     return None
 
 
+def coord_scale(node):
+    """How many times the texture repeats per UV unit along its coarsest axis (1 = plain UVs).
+
+    Follows the Vector input through reroutes and Mapping nodes. None when the chain holds
+    anything else (object/generated coordinates, math, linked scales): it can't be measured,
+    so the export leaves that image at full size."""
+    scale, sock, depth = 1.0, node.inputs.get("Vector"), 0
+    while sock is not None and sock.is_linked and depth < 8:
+        link = sock.links[0]
+        n = link.from_node
+        if n.type == "UVMAP" or (n.type == "TEX_COORD" and link.from_socket.name == "UV"):
+            return scale
+        if n.type == "REROUTE":
+            sock = n.inputs[0]
+        elif n.type == "MAPPING" and n.vector_type in {"POINT", "TEXTURE"}:
+            sc = n.inputs.get("Scale")
+            if sc is None or sc.is_linked:
+                return None
+            sx, sy = abs(sc.default_value[0]), abs(sc.default_value[1])
+            scale *= min(sx, sy) if n.vector_type == "POINT" else 1 / max(sx, sy, 1e-9)
+            sock = n.inputs.get("Vector")
+        else:
+            return None
+        depth += 1
+    return scale
+
+
 def image_nodes(tree, seen=None):
     """Every Image Texture node in a node tree, recursing into node groups."""
     seen = seen if seen is not None else set()
@@ -404,6 +431,16 @@ def face_visibility(g, cm, bvh_pack, name):
     cand = ic | any_v
     dmin = np.minimum.reduceat(np.where(iv, dv, np.inf)[lv], ls) if g["npoly"] else dc
     dmin = np.maximum(np.where(np.isfinite(dmin), dmin, dc), cm["near"])
+    if g["npoly"]:  # big faces that cross the frame with no corner or centre inside it (floors, walls)
+        x, y = proj(pv, dv)
+        front = np.minimum.reduceat((dv > cm["near"])[lv].astype(np.int8), ls) > 0
+        red = lambda f, v: f.reduceat(v[lv], ls)
+        span = (front & (red(np.minimum, x) <= cm["xmax"]) & (red(np.maximum, x) >= cm["xmin"])
+                & (red(np.minimum, y) <= cm["ymax"]) & (red(np.maximum, y) >= cm["ymin"])
+                & (red(np.minimum, dv) < cm["far"]))
+        extra = span & ~cand
+        cand = cand | extra
+        dmin[extra] = np.maximum(red(np.minimum, dv)[extra], cm["near"])  # nearest corner: errs on more detail
     vis = cand.copy()
     if bvh_pack is not None:
         bvh, tri_obj, tri_poly, occ_index = bvh_pack
@@ -501,6 +538,7 @@ def geometry_fingerprint(context, props):
     scene = context.scene
     h.update(f"{scene.frame_start}-{scene.frame_end}".encode())
     h.update((props.collection.name if props.collection else "").encode())
+    h.update(("cams:" + ",".join(sorted(c.name for c in cameras_of(context, props)))).encode())  # which ones count
     for k in ANALYSIS_PROPS:
         h.update(f"{k}={getattr(props, k)}".encode())
     for o in sorted(scene.objects, key=lambda o: o.name):
@@ -662,7 +700,7 @@ def _analyze(context, props):
         scene.frame_set(frame0)
         depsgraph = context.evaluated_depsgraph_get()
 
-    results = {}
+    results, attrs = {}, {}
     for o in objs:
         geo = read_mesh(o, depsgraph)
         cd = current_density(o, geo)
@@ -676,9 +714,26 @@ def _analyze(context, props):
         r = need * props.target_ratio
         with np.errstate(divide="ignore", invalid="ignore"):
             ratio = np.where((r > 0) & (cd["cur"] > 0), cd["cur"] / r, 0)
-        write_attributes(o, need, cd["cur"], ratio, scr[o.name], cd["size"], drv[o.name])
+        attrs.setdefault(o.data.name, []).append((o, need, cd["cur"], ratio, scr[o.name], cd["size"], drv[o.name]))
         results[o.name] = dict(req=r, scr=scr[o.name], cam_px=cam_px[o.name], drv=drv[o.name], **cd)
+    for users in attrs.values():
+        write_attributes(*_worst_user(users))
     return results, [c.name for c in cams], frames, labels
+
+
+def _worst_user(users):
+    """Linked duplicates share one mesh: per face, store what the most demanding object needs
+    (highest need, its driver; lowest ratio) so textures and UVs cover every copy."""
+    if len(users) == 1:
+        return users[0]
+    o = users[0][0]
+    need = np.stack([u[1] for u in users])
+    pick = need.argmax(axis=0)
+    cols = np.arange(need.shape[1])
+    ratio = np.stack([np.where(u[1] > 0, u[3], np.inf) for u in users]).min(axis=0)
+    ratio[np.isinf(ratio)] = 0
+    take = lambda i: np.stack([u[i] for u in users])[pick, cols]
+    return o, need.max(axis=0), take(2), ratio, np.stack([u[4] for u in users]).max(axis=0), users[0][5], take(6)
 
 
 # ----------------------------------------------------------------------------- attributes / viz

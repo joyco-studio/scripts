@@ -30,7 +30,7 @@ _MANAGED = {"on": False}          # set by run() so the exporter callbacks don't
 # ----------------------------------------------------------------------------- texture plan
 
 def material_users(context):
-    """image name -> list of (object, slot index, uv map) across every scene mesh."""
+    """image name -> list of (object, slot index, uv map, material, coordinate scale or None)."""
     out = {}
     for o in context.scene.objects:
         if o.type != "MESH":
@@ -43,7 +43,7 @@ def material_users(context):
             for n in core.image_nodes(mat.node_tree):
                 uv = core.uv_of_image_node(n)
                 uv = uv if uv and uv in o.data.uv_layers else default_uv
-                entry = (o, slot, uv, mat)
+                entry = (o, slot, uv, mat, core.coord_scale(n))
                 lst = out.setdefault(n.image.name, [])
                 if all((e[0], e[1], e[2]) != entry[:3] for e in lst):
                     lst.append(entry)
@@ -89,13 +89,16 @@ def texture_plan(context, props):
         if not users:
             entry["reason"] = "not used by exported objects"
             continue
+        if any(u[4] is None for u in users):
+            entry["reason"] = "texture coordinates can't be measured (not plain UVs / Mapping)"
+            continue
         missing = sorted({u[0].name for u in users if u[0].name not in geos})
         if missing:
             entry["reason"] = f"used by objects without analysis ({', '.join(missing[:3])})"
             continue
         need, wts, objn, drv = [], [], [], []
         mins, maxs = [], []
-        for o, slot, uv, mat in users:
+        for o, slot, uv, mat, cscale in users:
             g = geos[o.name]
             me = o.data
             if g["npoly"] != len(me.polygons):
@@ -106,7 +109,7 @@ def texture_plan(context, props):
             req = core.face_attr(me, "tc_required")[sel] * props.target_ratio
             scr = core.face_attr(me, "tc_screen_px")[sel]
             dr = core.face_attr(me, "tc_driver", np.int32, -1)[sel]
-            unit = core.uv_density(g, uv)[2][sel]
+            unit = core.uv_density(g, uv)[2][sel] * cscale  # a Mapping scale of 0.5 halves the texels per metre
             with np.errstate(divide="ignore", invalid="ignore"):
                 nr = np.where((req > 0) & (unit > 0), req / unit, np.nan)
             need.append(nr)
@@ -122,7 +125,9 @@ def texture_plan(context, props):
             continue
         need, wts, objn, drv = map(np.concatenate, (need, wts, objn, drv))
         side = max(w, h)
-        exact = core.wquantile(need, wts, q)
+        # need is in square-texture terms; the short side of a rectangular image must deliver it
+        aspect = side / min(w, h)
+        exact = core.wquantile(need, wts, q) * aspect
         seen = np.isfinite(need) & (wts > 0)
         target = core.pow2_ceil(exact) if seen.any() else props.export_min_size
         target = max(target, props.export_min_size, *mins) if mins else max(target, props.export_min_size)
@@ -136,7 +141,7 @@ def texture_plan(context, props):
         entry["need"] = round(exact) if seen.any() else 0
         entry["reason"] = "never seen" if not seen.any() else f"P{round(q * 100)} need {round(exact)} px"
         # what stops it from halving again: faces needing more than target/2
-        block = seen & (need > target / 2)
+        block = seen & (need * aspect > target / 2)
         if block.any():
             tot = wts[block].sum()
             keys = {}
@@ -439,6 +444,109 @@ def write_report(state, props):
     return body
 
 
+# ----------------------------------------------------------------------------- compression (chopper)
+
+COMPRESS = {"state": "", "text": ""}  # last compression, shown in the sidebar
+_PENDING = {}
+
+
+def _chopper_cmd(glb, folder, recipe):
+    folder = os.path.abspath(bpy.path.abspath(folder))
+    exe = os.path.join(folder, "node_modules", ".bin", "chopper")
+    if not os.path.exists(exe):
+        raise RuntimeError(f"chopper not found: {exe} (run your package manager's install in {folder})")
+    target = os.path.splitext(glb)[0] + ".compressed.glb"
+    cmd = [exe, "optimize", glb, target]
+    if recipe:
+        cmd += ["--recipe", os.path.abspath(bpy.path.abspath(recipe))]
+    return cmd, folder, target
+
+
+def _finish(glb, target, returncode, output):
+    if returncode:
+        raise RuntimeError("chopper failed: " + output.strip()[-400:])
+    out = dict(compressed=target, compressed_bytes=os.path.getsize(target), bytes=os.path.getsize(glb))
+    mb = lambda b: f"{b / 2**20:.2f} MB"
+    COMPRESS.update(state="ok", text=f"{os.path.basename(glb)}: {mb(out['bytes'])} -> {mb(out['compressed_bytes'])}")
+    md = os.path.splitext(glb)[0] + ".texel.md"
+    if os.path.exists(md):
+        with open(md, "a") as f:
+            f.write(f"\nCompressed with chopper: {mb(out['bytes'])} -> {mb(out['compressed_bytes'])} ({target})\n")
+    return out
+
+
+def compress(glb, folder, recipe=""):
+    """Run chopper (the studio's GLB compressor) on an exported GLB, writing <name>.compressed.glb next
+    to it. `folder` is a project with chopper installed (node_modules/.bin/chopper). Blocking."""
+    import subprocess
+    cmd, cwd, target = _chopper_cmd(glb, folder, recipe)
+    r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+    return _finish(glb, target, r.returncode, r.stderr or r.stdout)
+
+
+def _redraw():
+    for w in getattr(bpy.context.window_manager, "windows", []):
+        for a in w.screen.areas:
+            if a.type == "VIEW_3D":
+                a.tag_redraw()
+
+
+def _compress_when_written():
+    """File > Export: the exporter writes the GLB after our last hook. Wait until it is on disk, then
+    run chopper in the background and poll it, so Blender stays usable while it compresses."""
+    job = _PENDING
+    if not job:
+        return None
+    if time.time() - job["t0"] > 1800:
+        if job.get("proc"):
+            job["proc"].kill()
+        COMPRESS.update(state="error", text="compression timed out")
+        _PENDING.clear()
+        return None
+    try:
+        if job.get("proc") is None:
+            try:
+                st = os.stat(job["path"])
+            except OSError:
+                st = None
+            if st is None or st.st_mtime <= job["since"] or st.st_size != job["size"]:
+                job["size"] = st.st_size if st else None  # not written yet, or still growing
+                return 0.5
+            import subprocess
+            import tempfile
+            cmd, cwd, job["target"] = _chopper_cmd(job["path"], job["folder"], job["recipe"])
+            job["log"] = tempfile.TemporaryFile(mode="w+")
+            job["proc"] = subprocess.Popen(cmd, cwd=cwd, stdout=job["log"], stderr=subprocess.STDOUT, text=True)
+            return 1.0
+        if job["proc"].poll() is None:
+            return 1.0
+        job["log"].seek(0)
+        _finish(job["path"], job["target"], job["proc"].returncode, job["log"].read())
+    except Exception as e:
+        COMPRESS.update(state="error", text=str(e)[:200])
+        print("Texel Coverage:", e)
+    if job.get("log"):
+        job["log"].close()
+    _PENDING.clear()
+    _redraw()
+    return None
+
+
+def schedule_compress(path, props):
+    try:
+        since = os.stat(path).st_mtime
+    except OSError:
+        since = 0
+    if _PENDING.get("proc") and _PENDING["proc"].poll() is None:
+        _PENDING["proc"].kill()  # a newer export replaces the one still compressing
+    _PENDING.clear()
+    _PENDING.update(path=path, since=since, size=-1, t0=time.time(), folder=props.chopper_path,
+                    recipe=props.chopper_recipe, proc=None)
+    COMPRESS.update(state="running", text=f"compressing {os.path.basename(path)}…")
+    if not bpy.app.timers.is_registered(_compress_when_written):
+        bpy.app.timers.register(_compress_when_written, first_interval=0.5)
+
+
 # ----------------------------------------------------------------------------- exporter callbacks
 
 def _fallback_restore():
@@ -462,6 +570,10 @@ def pre_export(export_settings):
 
 def post_export(export_settings):
     props = bpy.context.scene.texel_coverage
+    if not _MANAGED["on"] and props.export_compress and props.chopper_path and not bpy.app.background:
+        path = export_settings.get("gltf_filepath", "")
+        if path.lower().endswith(".glb"):
+            schedule_compress(path, props)
     if _MANAGED["on"] or not props.export_enabled or not _ACTIVE.get("pending"):
         return
     _ACTIVE["pending"] = False
@@ -499,6 +611,9 @@ def run(context, filepath, collection=None, **overrides):
     kw.update(overrides)
     _MANAGED["on"] = True
     state = None
+    stored = props.collection
+    if collection is not None and collection != stored:
+        props.collection = collection  # measure and optimize what is actually exported
     try:
         if props.export_enabled:
             state = prepare(context, props, dict(gltf_filepath=filepath))
@@ -508,5 +623,7 @@ def run(context, filepath, collection=None, **overrides):
     finally:
         _MANAGED["on"] = False
         restore(context)
+        if props.collection != stored:
+            props.collection = stored
     body = write_report(state, props) if state else "optimization disabled"
     return body, state
