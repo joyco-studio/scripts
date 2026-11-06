@@ -494,6 +494,36 @@ def draw_uv_tools(layout, context):
     col.operator("texel_coverage.promote", icon="EXPORT")
 
 
+class TC_OT_cull_override(bpy.types.Operator):
+    bl_idname = "texel_coverage.cull_override"
+    bl_label = "Cull Override"
+    bl_description = ("Override this cull setting for the active object (click again or X to go back to the "
+                      "preset). Stored as a custom property, so the command line and exports use it too")
+    bl_options = {"REGISTER", "UNDO"}
+    prop: bpy.props.StringProperty()
+
+    _DESCR = {"tc_cull_shift": "How far the cameras may drift from the sampled positions, for this object",
+              "tc_cull_margin": "Extra surface kept around visible faces, for this object"}
+
+    def execute(self, context):
+        o = context.active_object
+        if o is None:
+            return {"CANCELLED"}
+        if self.prop == "tc_no_cull":
+            if o.get("tc_no_cull"):
+                del o["tc_no_cull"]
+            else:
+                o["tc_no_cull"] = True
+        elif self.prop in o:
+            del o[self.prop]
+        else:
+            param = dict((k, v) for k, v, _ in _OVERRIDES)[self.prop]
+            o[self.prop] = float(core.cull_params(props_of(context))[param])
+            o.id_properties_ui(self.prop).update(min=0.0, soft_max=1.0, step=1, precision=3,
+                                                 subtype="DISTANCE", description=self._DESCR[self.prop])
+        return {"FINISHED"}
+
+
 class TC_PT_cull(bpy.types.Panel):
     bl_label = "4. Cull"
     bl_space_type = "VIEW_3D"
@@ -516,18 +546,56 @@ class TC_PT_cull(bpy.types.Panel):
         r2 = row.row()
         r2.enabled = p.cull_pixel
         r2.prop(p, "cull_pixel_scale", text="Scale")
-        col.prop(p, "cull_skip")
-        b = col.column(align=True)
-        b.scale_y = 0.7
-        b.label(text="Per object: tc_no_cull,")
-        b.label(text="  tc_cull_shift, tc_cull_margin")
-        b.label(text="Rigged objects are never culled")
+        col.label(text="Never cull these objects:")
+        col.prop(p, "cull_skip", text="")
+        draw_object_cull(col.box(), context, p)
         row = col.row(align=True)
         row.operator("texel_coverage.cull_preview", icon="MOD_MASK")
         row.operator("texel_coverage.cull_clear", text="", icon="X")
         row = col.row(align=True)
         row.operator("texel_coverage.verify", icon="VIEWZOOM")
         row.prop(p, "verify_nudge", text="", icon="ORIENTATION_VIEW")
+
+
+_OVERRIDES = (("tc_cull_shift", "shift", "Camera Shift"), ("tc_cull_margin", "distance", "Surface Margin"))
+
+
+def draw_object_cull(layout, context, p):
+    """Cull status and per-object overrides of the active object."""
+    o = context.active_object
+    if o is None or o.type != "MESH":
+        layout.label(text="Select a mesh to see its cull settings", icon="INFO")
+        return
+    layout.label(text=o.name, icon="OBJECT_DATA")
+    if cull.rigged(o):
+        layout.label(text="Never culled: rigged (armature)", icon="ARMATURE_DATA")
+        return
+    if o.name in cull.skip_names(p):
+        layout.label(text="Never culled: in the Never Cull list", icon="CHECKBOX_HLT")
+        return
+    no_cull = bool(o.get("tc_no_cull", False))
+    layout.operator("texel_coverage.cull_override", text="Never Cull This Object", icon="CHECKBOX_HLT"
+                    if no_cull else "CHECKBOX_DEHLT", depress=no_cull).prop = "tc_no_cull"
+    if no_cull:
+        return
+    a = o.data.attributes.get(core.CULL_ATTR)
+    if a is not None and a.domain == "FACE" and len(a.data) == len(o.data.polygons) and len(a.data):
+        import numpy as np
+        keep = np.zeros(len(a.data), bool)
+        a.data.foreach_get("value", keep)
+        layout.label(text=f"Keeps {keep.sum():,} / {len(keep):,} faces", icon="MOD_MASK")
+    preset = core.cull_params(p)
+    col = layout.column(align=True)
+    for key, param, label in _OVERRIDES:
+        row = col.row(align=True)
+        if key in o:
+            row.prop(o, f'["{key}"]', text=label)
+            row.operator("texel_coverage.cull_override", text="", icon="X").prop = key
+        else:
+            split = row.split(factor=0.55, align=True)
+            split.label(text=label)
+            split.operator("texel_coverage.cull_override", text=f"{preset[param] * 100:g} cm",
+                           icon="DECORATE_OVERRIDE").prop = key
 
 
 def draw_export_options(layout, p):
@@ -600,6 +668,6 @@ def draw_gltf_export(context, layout):
 
 
 classes = (TC_Props, TC_OT_sync_cameras, TC_OT_analyze, TC_OT_show, TC_OT_use_scene_res, TC_OT_suggest,
-           TC_OT_lock, TC_OT_select_cuts, TC_OT_promote, TC_OT_checker, TC_OT_cull_preview, TC_OT_cull_clear,
+           TC_OT_lock, TC_OT_select_cuts, TC_OT_promote, TC_OT_checker, TC_OT_cull_preview, TC_OT_cull_clear, TC_OT_cull_override,
            TC_OT_prepare, TC_OT_plan, TC_OT_export, TC_OT_restore, TC_OT_verify,
            TC_PT_main, TC_PT_cameras, TC_PT_analyze, TC_PT_uvs, TC_PT_cull, TC_PT_export, TC_PT_uv_editor)
