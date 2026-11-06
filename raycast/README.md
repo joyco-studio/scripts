@@ -41,6 +41,29 @@ Opens a URL in Chrome with a true cold load: quits Chrome, wipes the Metal shade
 
 ---
 
+### `clean-node-modules.sh` 🧹
+
+Recursively finds `node_modules`, `.next`, and `.turbo` directories under a folder and removes them to reclaim disk space.
+
+**Usage:** Run from Raycast and fill in:
+
+- **directory** — folder to scan (`~` is supported). Your home folder, its parents, and `/` are refused.
+- **older than** *(optional)* — only match directories whose timestamp is older than `Nd`, `Nw`, or `Nm` (30-day months), e.g. `1m`.
+- **mode** — `Preview` (default) lists what would be removed; `Delete` removes it.
+
+```
+> Clean Node Modules
+> directory: ~/Documents/old-projects   older than: 1m   mode: Preview
+→ Lists matching directories, nothing deleted
+
+> mode: Delete
+→ "Removed 12 generated directories."
+```
+
+> ⚠️ Raycast scripts can't show a `[y/N]` prompt, so `Delete` runs without asking. Always run `Preview` first. Symlinked directories and other filesystems are skipped, and each target is re-validated right before removal.
+
+---
+
 ### `killport.sh` 💀
 
 Kill a process running on a specific port. No more hunting for PIDs.
