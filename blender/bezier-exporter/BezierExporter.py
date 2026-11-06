@@ -1,5 +1,6 @@
 bl_info = {
     "name": "Export Bezier2JSON",
+    "version": (1, 0, 0),
     "blender": (2, 80, 0),
     "location": "File > Export > Bezier2JSON (.json)",
     "category": "Import-Export",

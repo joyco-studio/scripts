@@ -21,7 +21,16 @@ import bpy
 
 from . import core, cull, export, uv_suggest
 
-VERSION = "0.3.0"
+
+
+def _manifest_version():
+    import os
+    import tomllib
+    with open(os.path.join(os.path.dirname(__file__), "blender_manifest.toml"), "rb") as f:
+        return tomllib.load(f)["version"]
+
+
+VERSION = _manifest_version()  # single source: blender_manifest.toml (synced from package.json)
 
 
 class TexelError(RuntimeError):

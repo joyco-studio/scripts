@@ -6,13 +6,15 @@ Full guide with screenshots: [Texel Coverage in Notion](https://app.notion.com/p
 
 ## Install
 
-Zip the `texel_coverage` folder and install it with Preferences > Get Extensions > ⌄ > Install from Disk (Blender 4.2+, tested on 5.1). For development, symlink it instead:
+Download `texel_coverage-<version>.zip` from the latest `texel-coverage@…` [GitHub Release](https://github.com/joyco-studio/scripts/releases) and install it with Preferences > Get Extensions > ⌄ > Install from Disk (Blender 4.2+, tested on 5.1). The installed version shows in Preferences and in every CLI result and export report (`meta.version`).
+
+For development, symlink the folder instead:
 
 ```sh
 ln -s "$PWD/texel_coverage" ~/Library/Application\ Support/Blender/5.1/extensions/user_default/texel_coverage
 ```
 
-then enable it in Preferences > Add-ons.
+then enable it in Preferences > Add-ons. Releases and changelogs: see [Versions and releases](../README.md#versions-and-releases).
 
 ## What's where
 

@@ -40,3 +40,10 @@ jobs:
           version: pnpm version:package
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Attach Blender add-on builds to their releases
+        if: steps.changesets.outputs.published == 'true'
+        run: node scripts/blender-addons.mjs release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PUBLISHED: ${{ steps.changesets.outputs.publishedPackages }}
