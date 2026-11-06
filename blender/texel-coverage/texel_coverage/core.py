@@ -22,26 +22,45 @@ import numpy as np
 from mathutils import Matrix, Vector
 from mathutils.bvhtree import BVHTree
 
-REQ_BANDS = [  # (upper bound px/m, colour, label)
-    (32, (0.15, 0.10, 0.35), "< 32"),
-    (64, (0.20, 0.20, 0.60), "32-64"),
-    (128, (0.13, 0.45, 0.70), "64-128"),
-    (256, (0.10, 0.65, 0.60), "128-256"),
-    (512, (0.35, 0.80, 0.30), "256-512"),
-    (1024, (0.85, 0.85, 0.20), "512-1k"),
-    (2048, (0.95, 0.55, 0.10), "1k-2k"),
-    (4096, (0.90, 0.20, 0.10), "2k-4k"),
-    (float("inf"), (1.00, 0.40, 0.80), "> 4k"),
+def to_srgb(rgb):
+    return tuple(c * 12.92 if c <= 0.0031308 else 1.055 * c ** (1 / 2.4) - 0.055 for c in rgb)
+
+
+def _srgb(h):
+    """'#rrggbb' -> linear RGB (what colour attributes and the GPU module expect)."""
+    c = [int(h[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+    return tuple(round(v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4, 5) for v in c)
+
+
+# Ratio: diverging. Warm = less detail than the cameras need, green = right, cool = more than needed.
+RATIO_BANDS = [  # (upper bound ratio, colour, legend label)
+    (0.5, _srgb("#d7301f"), ("under 0.5x", "blurry")),
+    (0.8, _srgb("#f4a236"), ("0.5 - 0.8x", "a bit soft")),
+    (1.5, _srgb("#3cb44b"), ("0.8 - 1.5x", "right")),
+    (3.0, _srgb("#5fa8e8"), ("1.5 - 3x", "more than needed")),
+    (float("inf"), _srgb("#3343b8"), ("over 3x", "wasted memory")),
 ]
-RATIO_BANDS = [  # (upper bound ratio, colour, label)
-    (0.5, (0.90, 0.10, 0.10), "< 0.5x  very blurry"),
-    (0.8, (0.95, 0.55, 0.10), "0.5-0.8x  soft"),
-    (1.5, (0.20, 0.80, 0.25), "0.8-1.5x  good"),
-    (3.0, (0.30, 0.60, 0.95), "1.5-3x  over"),
-    (float("inf"), (0.45, 0.20, 0.85), "> 3x  wasted"),
+# Required: one ordered ramp (viridis), dark = little detail needed, bright = a lot.
+REQ_BANDS = [  # (upper bound px/m, colour, legend label)
+    (64, _srgb("#440154"), ("under 64", "")),
+    (128, _srgb("#46327e"), ("64 - 128", "")),
+    (256, _srgb("#365c8d"), ("128 - 256", "")),
+    (512, _srgb("#277f8e"), ("256 - 512", "")),
+    (1024, _srgb("#1fa187"), ("512 - 1k", "")),
+    (2048, _srgb("#4ac16d"), ("1k - 2k", "")),
+    (4096, _srgb("#a0da39"), ("2k - 4k", "")),
+    (float("inf"), _srgb("#fde725"), ("over 4k", "")),
 ]
-UNSEEN = (0.12, 0.12, 0.12)
-NO_TEX = (0.9, 0.0, 0.9)
+UNSEEN = _srgb("#4a4a4a")
+NO_TEX = _srgb("#ff2bd6")
+LEGENDS = {  # view -> (title, explanation, [(colour, (range, meaning))])
+    "TC_Ratio": ("Texture detail vs camera need",
+                 "texels per screen pixel with today's UVs",
+                 [(c, l) for _, c, l in RATIO_BANDS] + [(NO_TEX, ("no texture", "")), (UNSEEN, ("never seen", ""))]),
+    "TC_Required": ("Camera need, px per meter",
+                    "1 m of this surface needs this many texels",
+                    [(c, l) for _, c, l in reversed(REQ_BANDS)] + [(UNSEEN, ("never seen", ""))]),
+}
 CACHE_KEY = "tc_cache"
 CULL_ATTR = "tc_keep"
 CULL_MOD = "TC Cull Unseen"
@@ -724,6 +743,18 @@ def refresh_ratio(obj, props):
     set_attr(me, "tc_current", cd["cur"])
     set_attr(me, "tc_ratio", ratio)
     set_face_colors(me, "TC_Ratio", band_colors(ratio, RATIO_BANDS, r <= 0, cd["size"] <= 0))
+    me.update()
+
+
+def recolor(obj):
+    """Repaint both views from the stored attributes, so files analyzed with older colours match the legend."""
+    me = obj.data
+    if "tc_required" not in me.attributes or "tc_ratio" not in me.attributes:
+        return
+    req, ratio = face_attr(me, "tc_required"), face_attr(me, "tc_ratio")
+    unseen = req <= 0
+    set_face_colors(me, "TC_Required", band_colors(req, REQ_BANDS, unseen))
+    set_face_colors(me, "TC_Ratio", band_colors(ratio, RATIO_BANDS, unseen, ratio <= 0))
     me.update()
 
 

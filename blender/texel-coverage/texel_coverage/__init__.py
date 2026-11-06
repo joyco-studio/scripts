@@ -60,6 +60,7 @@ def register():
 def unregister():
     _gltf_ui(False)
     overlay.unregister()
+    ui.free_swatches()
     for h, f in ((bpy.app.handlers.depsgraph_update_post, core.mark_dirty),
                  (bpy.app.handlers.load_post, _on_load)):
         if f in h:

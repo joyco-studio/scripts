@@ -64,6 +64,10 @@ class TC_Props(bpy.types.PropertyGroup):
                     "layouts when cameras change a little, but textures can come out up to 2x bigger")
     uv_overlay: bpy.props.BoolProperty(name="Ratio Overlay", default=True,
                                        description="Colour faces by ratio in the UV editor while editing")
+    view: bpy.props.StringProperty(default="TC_Ratio", options={"HIDDEN"})
+    view_legend: bpy.props.BoolProperty(name="Legend in Viewport", default=True,
+                                        description="Draw the colour legend in the viewport and UV editor "
+                                                    "while a Texel view is shown")
     # cull
     cull_preset: bpy.props.EnumProperty(name="Margin", default="SAFE", items=[
         ("SAFE", "Safe", "Camera shift 0.2 m, overscan 1.1, surface margin 5 cm"),
@@ -144,6 +148,7 @@ class TC_OT_analyze(bpy.types.Operator):
             return {"CANCELLED"}
         _LAST["summary"] = res["data"]["textures"]
         core.show_attribute(context, "TC_Ratio")
+        props_of(context).view = "TC_Ratio"
         return {"FINISHED"}
 
 class TC_OT_show(bpy.types.Operator):
@@ -153,10 +158,12 @@ class TC_OT_show(bpy.types.Operator):
     attr: bpy.props.StringProperty()
 
     def execute(self, context):
-        if self.attr == "TC_Ratio":
-            for o in core.target_objects(context):
+        for o in core.target_objects(context):
+            if self.attr == "TC_Ratio":
                 core.refresh_ratio(o, props_of(context))
+            core.recolor(o)
         core.show_attribute(context, self.attr)
+        props_of(context).view = self.attr
         return {"FINISHED"}
 
 
@@ -326,6 +333,12 @@ class TC_OT_verify(bpy.types.Operator):
         p = props_of(context)
         return {"FINISHED"} if run_api(self, api.verify, context, nudge=p.verify_nudge) else {"CANCELLED"}
 
+def _status_row(layout, label, state):
+    icon = {"fresh": "CHECKMARK", "stale": "ERROR", "none": "RADIOBUT_OFF"}[state]
+    text = {"fresh": "ok", "stale": "outdated", "none": "not run"}[state]
+    layout.label(text=f"{label}: {text}", icon=icon)
+
+
 class TC_PT_main(bpy.types.Panel):
     bl_label = "Texel Coverage"
     bl_space_type = "VIEW_3D"
@@ -389,14 +402,11 @@ class TC_PT_analyze(bpy.types.Panel):
         col.prop(p, "occlusion")
         col.operator("texel_coverage.analyze", icon="CAMERA_DATA")
         row = col.row(align=True)
-        row.operator("texel_coverage.show", text="Ratio", icon="SHADING_SOLID").attr = "TC_Ratio"
-        row.operator("texel_coverage.show", text="Required", icon="SHADING_SOLID").attr = "TC_Required"
-        b = col.column(align=True)
-        b.scale_y = 0.7
-        b.label(text="Ratio: red blurry, green good,")
-        b.label(text="  blue/purple wasted, grey unseen")
-        b.label(text="Required px/m: purple <32, green 512,")
-        b.label(text="  yellow 1k, orange 2k, red 4k")
+        for attr, text in (("TC_Ratio", "Ratio"), ("TC_Required", "Required")):
+            row.operator("texel_coverage.show", text=text, icon="SHADING_SOLID",
+                         depress=p.view == attr).attr = attr
+        draw_legend(col.box(), p.view)
+        col.prop(p, "view_legend")
         if _LAST.get("summary"):
             box = col.box()
             box.label(text="Texture: now -> needs (current UVs / ideal UVs)")
@@ -417,6 +427,52 @@ class TC_PT_uvs(bpy.types.Panel):
         draw_uv_tools(self.layout, context)
 
 
+_SWATCH = {"pcoll": None, "ids": {}}
+
+
+def swatch(rgb):
+    """Icon id of a flat colour square (rgb is linear, like the face colours)."""
+    key = tuple(rgb)
+    if key not in _SWATCH["ids"]:
+        import bpy.utils.previews
+        if _SWATCH["pcoll"] is None:
+            _SWATCH["pcoll"] = bpy.utils.previews.new()
+        n = 32
+        srgb = core.to_srgb(rgb)
+        px = []
+        for yy in range(n):
+            for xx in range(n):
+                edge = xx in (0, n - 1) or yy in (0, n - 1)
+                px += [0.0, 0.0, 0.0, 0.0] if edge else [*srgb, 1.0]
+        pv = _SWATCH["pcoll"].new(f"tc_swatch_{len(_SWATCH['ids'])}")
+        pv.icon_size = (n, n)
+        pv.icon_pixels_float = px
+        _SWATCH["ids"][key] = pv.icon_id
+    return _SWATCH["ids"][key]
+
+
+def free_swatches():
+    if _SWATCH["pcoll"] is not None:
+        import bpy.utils.previews
+        bpy.utils.previews.remove(_SWATCH["pcoll"])
+    _SWATCH.update(pcoll=None, ids={})
+
+
+def draw_legend(layout, view):
+    title, note, rows = core.LEGENDS.get(view, core.LEGENDS["TC_Ratio"])
+    col = layout.column(align=True)
+    col.label(text=title)
+    sub = col.column(align=True)
+    sub.scale_y = 0.75
+    for c, (rng, meaning) in rows:
+        row = sub.split(factor=0.45)
+        row.label(text=rng, icon_value=swatch(c))
+        row.label(text=meaning)
+    note_row = col.row()
+    note_row.enabled = False
+    note_row.label(text=note)
+
+
 def draw_uv_tools(layout, context):
     p = props_of(context)
     col = layout.column()
@@ -433,6 +489,8 @@ def draw_uv_tools(layout, context):
     col.operator("texel_coverage.checker", icon="TEXTURE",
                  depress=overlay.checker_active(context.scene))
     col.prop(p, "uv_overlay")
+    if p.uv_overlay and context.space_data.type == "IMAGE_EDITOR":
+        draw_legend(col.box(), "TC_Ratio")
     col.operator("texel_coverage.promote", icon="EXPORT")
 
 

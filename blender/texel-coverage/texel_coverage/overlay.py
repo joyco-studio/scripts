@@ -19,7 +19,7 @@ from gpu_extras.batch import batch_for_shader
 
 from . import core, uv_suggest
 
-_HANDLE = {"uv": None}
+_HANDLE = {"uv": None, "view3d": None, "uv_legend": None}
 _CACHE = {"key": None, "t": 0.0, "tris": None, "cols": None, "text": []}
 CHECKER = "TC Target Checker"
 CHECKER_NODE = "TC Checker"
@@ -56,7 +56,7 @@ def compute(context):
     s2 = abs(obj.matrix_world.to_3x3().determinant()) ** (2 / 3)
     sync = context.scene.tool_settings.use_uv_select_sync
     edges = np.array([b[0] for b in core.RATIO_BANDS[:-1]])
-    cols = np.array([b[1] for b in core.RATIO_BANDS], np.float32)
+    cols = np.array([core.to_srgb(b[1]) for b in core.RATIO_BANDS], np.float32)
     tris, tcol = [], []
     sel_need, sel_cur, sel_w, sel_drv = [], [], [], {}
     for f in bm.faces:
@@ -70,9 +70,9 @@ def compute(context):
         need = f[req_l] * props.target_ratio
         cur = size * math.sqrt(ua / wa) if wa > 0 else 0.0
         if need <= 0:
-            c = core.UNSEEN
+            c = core.to_srgb(core.UNSEEN)
         elif size <= 0:
-            c = core.NO_TEX
+            c = core.to_srgb(core.NO_TEX)
         else:
             c = cols[np.searchsorted(edges, cur / need, side="right")]
         for i in range(1, n - 1):
@@ -123,9 +123,10 @@ def draw_uv():
         batch.draw(shader)
         gpu.state.blend_set("NONE")
     if _CACHE["text"]:
-        font = 0
-        blf.size(font, 13)
-        y = 20 + 18 * (len(_CACHE["text"]) - 1)
+        font, sc = 0, context.preferences.system.ui_scale
+        blf.size(font, 12 * sc)
+        step = round(17 * sc)
+        y = 20 + step * (len(_CACHE["text"]) - 1)
         for line in _CACHE["text"]:
             blf.color(font, 0, 0, 0, 0.8)
             blf.position(font, 21, y - 1, 0)
@@ -133,18 +134,105 @@ def draw_uv():
             blf.color(font, 1, 1, 1, 1)
             blf.position(font, 20, y, 0)
             blf.draw(font, line)
-            y -= 18
+            y -= step
+
+
+# ----------------------------------------------------------------------------- legends
+
+def _shown_view(context):
+    """The Texel view the viewport is showing (or None): Solid shading, attribute colour, TC_* active."""
+    sh = context.space_data.shading
+    if sh.type != "SOLID" or sh.color_type not in {"ATTRIBUTE", "VERTEX"}:
+        return None
+    obj = context.active_object
+    if obj is None or obj.type != "MESH" or not obj.data.color_attributes.get("TC_Ratio"):
+        obj = next((o for o in context.visible_objects
+                    if o.type == "MESH" and o.data.color_attributes.get("TC_Ratio")), None)
+    act = obj.data.color_attributes.active_color if obj else None
+    return act.name if act is not None and act.name in core.LEGENDS else None
+
+
+def _side_width(context, kind):
+    """Width of an overlapping side region, so the legend is not drawn under it."""
+    if not context.preferences.system.use_region_overlap:
+        return 0
+    return sum(r.width for r in context.area.regions if r.type == kind and r.width > 1)
+
+
+def draw_legend(view, x, y, anchor="left"):
+    """Swatch legend card with its bottom corner at (x, y), in region pixels."""
+    title, note, rows = core.LEGENDS[view]
+    s = bpy.context.preferences.system.ui_scale
+    font, fs = 0, 11 * s
+    blf.size(font, fs)
+    line, pad, sw = round(17 * s), round(8 * s), round(12 * s)
+    dim = lambda t: blf.dimensions(font, t)[0]
+    col2 = pad * 2 + sw + max(dim(r[1][0]) for r in rows) + pad * 1.5
+    lines = len(rows) + 2
+    w = max(col2 + max(dim(r[1][1]) for r in rows), dim(title), dim(note)) + pad * 2
+    h = pad * 2 + line * lines
+    if anchor == "right":
+        x -= w
+    shader = gpu.shader.from_builtin("UNIFORM_COLOR")
+    gpu.state.blend_set("ALPHA")
+
+    def rect(x0, y0, x1, y1, rgba):
+        b = batch_for_shader(shader, "TRIS", {"pos": [(x0, y0), (x1, y0), (x1, y1), (x0, y0), (x1, y1), (x0, y1)]})
+        shader.uniform_float("color", rgba)
+        b.draw(shader)
+
+    rect(x, y, x + w, y + h, (0.09, 0.09, 0.09, 0.94))
+    ty = y + h - pad - line + round(4 * s)
+    blf.color(font, 1, 1, 1, 1)
+    blf.position(font, x + pad, ty, 0)
+    blf.draw(font, title)
+    for c, (rng, meaning) in rows:
+        ty -= line
+        rect(x + pad, ty - 2 * s, x + pad + sw, ty - 2 * s + sw, (*core.to_srgb(c), 1.0))  # UI draws in display space
+        blf.color(font, 0.92, 0.92, 0.92, 1)
+        blf.position(font, x + pad * 2 + sw, ty, 0)
+        blf.draw(font, rng)
+        blf.color(font, 0.7, 0.7, 0.7, 1)
+        blf.position(font, x + col2, ty, 0)
+        blf.draw(font, meaning)
+    ty -= line
+    blf.color(font, 0.65, 0.65, 0.65, 1)
+    blf.position(font, x + pad, ty, 0)
+    blf.draw(font, note)
+    gpu.state.blend_set("NONE")
+
+
+def draw_view3d():
+    context = bpy.context
+    props = getattr(context.scene, "texel_coverage", None)
+    if props is None or not props.view_legend or not context.space_data.overlay.show_overlays:
+        return
+    view = _shown_view(context)
+    if view:
+        draw_legend(view, _side_width(context, "TOOLS") + 12, 12)
+
+
+def draw_uv_legend():
+    context = bpy.context
+    props = context.scene.texel_coverage
+    if not (props.uv_overlay and props.view_legend and context.mode == "EDIT_MESH" and _CACHE["tris"] is not None):
+        return
+    draw_legend("TC_Ratio", context.region.width - _side_width(context, "UI") - 12, 12, anchor="right")
 
 
 def register():
     if _HANDLE["uv"] is None:
         _HANDLE["uv"] = bpy.types.SpaceImageEditor.draw_handler_add(draw_uv, (), "WINDOW", "POST_PIXEL")
+        _HANDLE["uv_legend"] = bpy.types.SpaceImageEditor.draw_handler_add(draw_uv_legend, (), "WINDOW", "POST_PIXEL")
+        _HANDLE["view3d"] = bpy.types.SpaceView3D.draw_handler_add(draw_view3d, (), "WINDOW", "POST_PIXEL")
 
 
 def unregister():
-    if _HANDLE["uv"] is not None:
-        bpy.types.SpaceImageEditor.draw_handler_remove(_HANDLE["uv"], "WINDOW")
-        _HANDLE["uv"] = None
+    for key, space in (("uv", bpy.types.SpaceImageEditor), ("uv_legend", bpy.types.SpaceImageEditor),
+                       ("view3d", bpy.types.SpaceView3D)):
+        if _HANDLE[key] is not None:
+            space.draw_handler_remove(_HANDLE[key], "WINDOW")
+            _HANDLE[key] = None
 
 
 # ----------------------------------------------------------------------------- target checker
