@@ -113,6 +113,7 @@ def plan(context):
             if not target:
                 skip("no suggested size for its material: run Suggest UVs")
             else:
+                target = min(target, max(w, h))  # baking can't add detail the source doesn't have
                 f = target / max(w, h)
                 jobs[img_name] = dict(size=[max(1, round(w * f)), max(1, round(h * f))], users=users,
                                       normal=_is_normal(None, nodes[0]))
@@ -256,22 +257,31 @@ def bake(context, props):
     meshes = {u[0].data for job in jobs.values() for u in job["users"]}
     uv_state = [(me, me.uv_layers.active.name if me.uv_layers.active else None) for me in meshes]
     baked = {}
+    hidden = {o.name: o.hide_render for o in scene.objects}
     try:
         bk.use_selected_to_active, bk.target = False, "IMAGE_TEXTURES"
         scene.render.engine = "CYCLES"
         scene.cycles.samples = 8
         scene.cycles.use_adaptive_sampling = False
         margin = max(2, int(props.pack_margin_px))
+        where = {}
         for name, job in jobs.items():
+            objs = {u[0] for u in job["users"]}
+            for o in scene.objects:  # Cycles loads every visible object and texture: only these
+                o.hide_render = o not in objs or hidden[o.name]
             for o, slot, uv, mat, _ in job["users"]:  # bakes are written into the active map
                 o.data.uv_layers.active = o.data.uv_layers[uv + uv_suggest.SUFFIX]
-            baked[name] = _bake_one(context, bpy.data.images[name], job, margin)
-        where = {name: _save(bpy.data.images[name], new) for name, new in baked.items()}  # all saved first
+            new = baked[name] = _bake_one(context, bpy.data.images[name], job, margin)
+            where[name] = _save(bpy.data.images[name], new)  # saved before any material switches
+            new.buffers_free()  # reloads from disk / packed data when shown
     except Exception:
         for new in baked.values():
             bpy.data.images.remove(new)
         raise
     finally:
+        for o in scene.objects:
+            if o.name in hidden:
+                o.hide_render = hidden[o.name]
         for me, act in uv_state:
             if act and act in me.uv_layers:
                 me.uv_layers.active = me.uv_layers[act]
