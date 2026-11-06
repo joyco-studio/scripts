@@ -125,6 +125,15 @@ def action_fcurves(action):
         yield from action.fcurves
 
 
+def object_mode(context):
+    """Leave Edit (or any other) mode: mesh face data is only readable and writable in Object Mode.
+    Returns True if the mode changed."""
+    if context.mode == "OBJECT" or context.active_object is None:
+        return False
+    bpy.ops.object.mode_set(mode="OBJECT")
+    return True
+
+
 def frames_of(scene, props):
     if props.use_frames:
         return list(range(scene.frame_start, scene.frame_end + 1, max(1, props.frame_step)))

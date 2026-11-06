@@ -124,6 +124,8 @@ def props_of(context):
 
 def run_api(op, fn, *args, **kw):
     """Call an api function from an operator: same code path as the command line."""
+    if core.object_mode(bpy.context):
+        op.report({"INFO"}, "Switched to Object Mode (mesh data can't be read in Edit Mode)")
     try:
         res = fn(*args, **kw)
     except api.TexelError as e:
@@ -168,6 +170,7 @@ class TC_OT_show(bpy.types.Operator):
     attr: bpy.props.StringProperty()
 
     def execute(self, context):
+        core.object_mode(context)
         for o in core.target_objects(context):
             if self.attr == "TC_Ratio":
                 core.refresh_ratio(o, props_of(context))

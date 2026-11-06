@@ -326,6 +326,7 @@ def ensure_fresh(context, props, log):
 
 
 def prepare(context, props, export_settings=None):
+    core.object_mode(context)
     restore(context)  # leftovers from an interrupted export
     state = dict(started=time.time(), log=[], modifiers=[], plan=[], cull={}, ok=False,
                  filepath=(export_settings or {}).get("gltf_filepath", ""))
