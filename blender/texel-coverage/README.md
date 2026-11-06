@@ -21,6 +21,7 @@ then enable it in Preferences > Add-ons. Releases and changelogs: see [Versions 
 | Panel | Use it to |
 |---|---|
 | 3D View > Sidebar > Texel | Sync site cameras, Analyze (Ratio / Required views), Suggest UVs, preview and verify the cull, export settings |
+| 3D View > Sidebar > Texel > UVs | Suggest UVs, then **Bake to Suggested UVs**: bakes every texture into the new layout (`<image>_tc`, saved next to the original or packed), promotes it and switches the materials. Originals are untouched; Ctrl+Z or **Revert Bake** goes back |
 | UV Editor > Sidebar > Texel | Ratio overlay while editing, lock islands, select proposed cuts, promote |
 | File > Export > glTF 2.0 > Texel Optimize | Turn optimize-on-export on or off |
 

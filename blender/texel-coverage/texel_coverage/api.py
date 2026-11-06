@@ -19,7 +19,7 @@ import time
 
 import bpy
 
-from . import core, cull, export, uv_suggest
+from . import bake, core, cull, export, uv_suggest
 
 
 
@@ -218,6 +218,30 @@ def promote(context, objects=None):
     done = uv_suggest.promote(context, [o for o in objs if o.type == "MESH"])
     return _result("promote", True, f"promoted {len(done)} UV map(s); re-bake textures into them",
                    dict(promoted=sorted(done)), t0, context)
+
+
+def bake_textures(context):
+    t0 = time.time()
+    done, skipped = bake.bake(context, context.scene.texel_coverage)
+    if not done and not skipped:
+        raise TexelError("nothing to bake: run Suggest UVs first (no *_tc_suggest maps)")
+    lines = [f"  {d['image']} -> {d['baked']} {d['size'][0]}x{d['size'][1]}"
+             + (" (normal)" if d["normal"] else "") for d in done]
+    lines += [f"  skipped {k}: {v}" for k, v in sorted(skipped.items())]
+    core.write_text("Texel Bake", "BAKE TO SUGGESTED UVS\n" + "\n".join(lines))
+    msg = f"baked {len(done)} texture(s) into the suggested UVs and switched to them"
+    if skipped:
+        msg += f"; skipped {len(skipped)} (see warnings)"
+    return _result("bake", bool(done), msg,
+                   dict(baked=done, skipped=[dict(image=k, reason=v) for k, v in sorted(skipped.items())]),
+                   t0, context, [f"{k}: {v}" for k, v in sorted(skipped.items())])
+
+
+def revert_bake(context):
+    t0 = time.time()
+    images, uvs = bake.revert(context)
+    return _result("revert-bake", True, f"restored {images} image node(s) and {uvs} UV map(s)",
+                   dict(images=images, uv_maps=uvs), t0, context)
 
 
 def plan(context):

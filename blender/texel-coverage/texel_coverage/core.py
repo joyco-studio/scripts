@@ -822,8 +822,39 @@ def recolor(obj):
     me.update()
 
 
+VIEW_KEY = "tc_view_restore"  # shading and active colours from before a Texel view, to turn it off
+
+
+def view_shown(context):
+    """The Texel view a 3D viewport shows right now (TC_Ratio / TC_Required), or None."""
+    if not context.screen:
+        return None
+    for area in context.screen.areas:
+        if area.type != "VIEW_3D":
+            continue
+        sh = area.spaces.active.shading
+        if sh.type == "SOLID" and sh.color_type in {"ATTRIBUTE", "VERTEX"}:
+            o = next((o for o in context.scene.objects
+                      if o.type == "MESH" and o.data.color_attributes.get("TC_Ratio")), None)
+            act = o.data.color_attributes.active_color if o else None
+            if act is not None and act.name in LEGENDS:
+                return act.name
+    return None
+
+
 def show_attribute(context, name):
-    for o in context.scene.objects:
+    scene = context.scene
+    if view_shown(context) is None:  # entering a Texel view: remember how to leave it
+        saved = dict(shading=[], colors={})
+        for o in scene.objects:
+            if o.type == "MESH" and o.data.color_attributes.active_color:
+                saved["colors"][o.data.name] = o.data.color_attributes.active_color.name
+        for area in context.screen.areas if context.screen else []:
+            if area.type == "VIEW_3D":
+                sh = area.spaces.active.shading
+                saved["shading"].append([sh.type, sh.color_type, sh.light])
+        scene[VIEW_KEY] = saved
+    for o in scene.objects:
         if o.type == "MESH" and name in o.data.color_attributes:
             o.data.color_attributes.active_color = o.data.color_attributes[name]
     for area in context.screen.areas if context.screen else []:
@@ -833,6 +864,33 @@ def show_attribute(context, name):
             items = {i.identifier for i in sh.bl_rna.properties["color_type"].enum_items}
             sh.color_type = "ATTRIBUTE" if "ATTRIBUTE" in items else "VERTEX"
             sh.light = "FLAT"
+
+
+def hide_attribute(context):
+    """Leave the Texel view: shading and active colour attributes go back to what they were."""
+    scene = context.scene
+    saved = scene.get(VIEW_KEY)
+    saved = saved.to_dict() if hasattr(saved, "to_dict") else {}
+    colors = saved.get("colors", {})
+    for o in scene.objects:
+        if o.type != "MESH":
+            continue
+        ca = o.data.color_attributes
+        prev = colors.get(o.data.name)
+        if prev and prev in ca:
+            ca.active_color = ca[prev]
+        elif ca.active_color and ca.active_color.name in LEGENDS:
+            other = next((a for a in ca if a.name not in LEGENDS), None)
+            if other is not None:
+                ca.active_color = other
+    shading = list(saved.get("shading", []))
+    for area in context.screen.areas if context.screen else []:
+        if area.type == "VIEW_3D":
+            sh = area.spaces.active.shading
+            t, c, l = shading.pop(0) if shading else ("SOLID", "MATERIAL", "STUDIO")
+            sh.type, sh.color_type, sh.light = t, c, l
+    if VIEW_KEY in scene:
+        del scene[VIEW_KEY]
 
 
 # ----------------------------------------------------------------------------- report

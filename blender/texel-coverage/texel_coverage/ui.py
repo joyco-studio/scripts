@@ -166,10 +166,14 @@ class TC_OT_analyze(bpy.types.Operator):
 class TC_OT_show(bpy.types.Operator):
     bl_idname = "texel_coverage.show"
     bl_label = "Show"
-    bl_description = "Show this view in the viewport (Solid shading, attribute colour)"
+    bl_description = ("Show this view in the viewport (Solid shading, attribute colour). "
+                      "Click again to turn it off and get your previous shading back")
     attr: bpy.props.StringProperty()
 
     def execute(self, context):
+        if core.view_shown(context) == self.attr:  # clicking the view that is on turns it off
+            core.hide_attribute(context)
+            return {"FINISHED"}
         core.object_mode(context)
         for o in core.target_objects(context):
             if self.attr == "TC_Ratio":
@@ -258,6 +262,37 @@ class TC_OT_promote(bpy.types.Operator):
     def execute(self, context):
         names = [o.name for o in context.selected_objects if o.type == "MESH"] or None
         return {"FINISHED"} if run_api(self, api.promote, context, names) else {"CANCELLED"}
+
+class TC_OT_bake(bpy.types.Operator):
+    bl_idname = "texel_coverage.bake"
+    bl_label = "Bake to Suggested UVs"
+    bl_description = ("Bake every texture from the current UVs into the suggested layout (new *_tc images "
+                      "saved next to the originals), promote the layout and switch the materials to the "
+                      "baked images. Originals are untouched: Ctrl+Z or Revert Bake goes back")
+    # No "UNDO" option: Blender 5.1 crashes on Ctrl+Z when an operator's automatic undo step
+    # adds images to materials shown in Material Preview. A manual push undoes the same way.
+    bl_options = {"REGISTER"}
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_confirm(self, event)
+
+    def execute(self, context):
+        ok = run_api(self, api.bake_textures, context)
+        bpy.ops.ed.undo_push(message="Bake to Suggested UVs")
+        return {"FINISHED"} if ok else {"CANCELLED"}
+
+
+class TC_OT_revert_bake(bpy.types.Operator):
+    bl_idname = "texel_coverage.revert_bake"
+    bl_label = "Revert Bake"
+    bl_description = "Point materials back at the original images and restore the UVs from before Promote"
+    bl_options = {"REGISTER"}  # manual undo push, same reason as Bake
+
+    def execute(self, context):
+        ok = run_api(self, api.revert_bake, context)
+        bpy.ops.ed.undo_push(message="Revert Bake")
+        return {"FINISHED"} if ok else {"CANCELLED"}
+
 
 class TC_OT_checker(bpy.types.Operator):
     bl_idname = "texel_coverage.checker"
@@ -415,9 +450,10 @@ class TC_PT_analyze(bpy.types.Panel):
         col.prop(p, "occlusion")
         col.operator("texel_coverage.analyze", icon="CAMERA_DATA")
         row = col.row(align=True)
+        shown = core.view_shown(context)
         for attr, text in (("TC_Ratio", "Ratio"), ("TC_Required", "Required")):
-            row.operator("texel_coverage.show", text=text, icon="SHADING_SOLID",
-                         depress=p.view == attr).attr = attr
+            row.operator("texel_coverage.show", text=text, icon="HIDE_OFF" if shown == attr else "SHADING_SOLID",
+                         depress=shown == attr).attr = attr
         draw_legend(col.box(), p.view)
         col.prop(p, "view_legend")
         if _LAST.get("summary"):
@@ -504,7 +540,10 @@ def draw_uv_tools(layout, context):
     col.prop(p, "uv_overlay")
     if p.uv_overlay and context.space_data.type == "IMAGE_EDITOR":
         draw_legend(col.box(), "TC_Ratio")
-    col.operator("texel_coverage.promote", icon="EXPORT")
+    row = col.row(align=True)
+    row.operator("texel_coverage.bake", icon="RENDER_STILL")
+    row.operator("texel_coverage.revert_bake", text="", icon="LOOP_BACK")
+    col.operator("texel_coverage.promote", text="Promote Only (no bake)", icon="EXPORT")
 
 
 class TC_OT_cull_override(bpy.types.Operator):
@@ -698,6 +737,6 @@ def draw_gltf_export(context, layout):
 
 
 classes = (TC_Props, TC_OT_sync_cameras, TC_OT_analyze, TC_OT_show, TC_OT_use_scene_res, TC_OT_suggest,
-           TC_OT_lock, TC_OT_select_cuts, TC_OT_promote, TC_OT_checker, TC_OT_cull_preview, TC_OT_cull_clear, TC_OT_cull_override,
+           TC_OT_lock, TC_OT_select_cuts, TC_OT_promote, TC_OT_bake, TC_OT_revert_bake, TC_OT_checker, TC_OT_cull_preview, TC_OT_cull_clear, TC_OT_cull_override,
            TC_OT_prepare, TC_OT_plan, TC_OT_export, TC_OT_restore, TC_OT_verify,
            TC_PT_main, TC_PT_cameras, TC_PT_analyze, TC_PT_uvs, TC_PT_cull, TC_PT_export, TC_PT_uv_editor)

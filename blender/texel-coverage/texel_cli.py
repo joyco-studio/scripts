@@ -14,7 +14,7 @@ import os
 import sys
 import traceback
 
-COMMANDS = ("status", "settings", "sync-cameras", "analyze", "cull", "update", "suggest", "promote",
+COMMANDS = ("status", "settings", "sync-cameras", "analyze", "cull", "update", "suggest", "promote", "bake", "revert-bake",
             "plan", "verify", "export", "restore")
 
 HELP = """commands (run in order):
@@ -26,6 +26,8 @@ HELP = """commands (run in order):
   update         analyze and cull only if they are out of date
   suggest        write <uv>_tc_suggest maps sized by camera need (--objects)
   promote        copy suggested maps into the render UV maps (--objects)
+  bake           bake textures into the suggested UVs, promote, switch materials (save with --save)
+  revert-bake    back to the original images and UVs
   plan           texture sizes an export would use, without exporting
   verify         render every camera moment with and without the cull (--no-nudge, --max-diff-px)
   export         optimized GLB with the file's glTF settings (--out, --collection, --plain, --chopper)
@@ -102,6 +104,10 @@ def run(a, api):
             r = api.suggest(context, objects)
         elif cmd == "promote":
             r = api.promote(context, objects)
+        elif cmd == "bake":
+            r = api.bake_textures(context)
+        elif cmd == "revert-bake":
+            r = api.revert_bake(context)
         elif cmd == "plan":
             r = api.plan(context)
         elif cmd == "verify":
