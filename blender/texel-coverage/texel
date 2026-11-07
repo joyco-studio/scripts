@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Texel Coverage command line.  Usage: texel FILE.blend COMMAND... [options]   (texel --help)
+#
+# Runs Blender headless with factory settings and this checkout's add-on, so every machine and
+# every agent gets the same result for the same file. Blender's own log goes to stderr; stdout
+# only carries the result (human text, or JSON with --json). Set BLENDER to pick a Blender.
+set -euo pipefail
+
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -z "${BLENDER:-}" ]; then
+  if command -v blender >/dev/null 2>&1; then BLENDER=blender
+  elif [ -x /Applications/Blender.app/Contents/MacOS/Blender ]; then BLENDER=/Applications/Blender.app/Contents/MacOS/Blender
+  else echo "texel: Blender not found; set BLENDER=/path/to/blender" >&2; exit 1
+  fi
+fi
+
+FILE=()
+if [ $# -gt 0 ] && [[ "$1" == *.blend ]]; then
+  [ -f "$1" ] || { echo "texel: no such file: $1" >&2; exit 1; }
+  FILE=("$1"); shift
+elif [ $# -eq 0 ] || [[ " $* " != *" --help "* && " $* " != *" -h "* ]]; then
+  echo "usage: texel FILE.blend COMMAND... [options]   (texel --help for commands)" >&2; exit 1
+fi
+
+RESULT="$(mktemp -t texel.XXXXXX)"
+trap 'rm -f "$RESULT"' EXIT
+set +e
+TEXEL_RESULT="$RESULT" "$BLENDER" -b ${FILE[@]+"${FILE[@]}"} --factory-startup --python-exit-code 1 \
+  --python "$DIR/texel_cli.py" -- "$@" 1>&2
+CODE=$?
+set -e
+cat "$RESULT"
+exit $CODE
