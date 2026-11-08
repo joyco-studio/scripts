@@ -244,6 +244,27 @@ def face_groups(obj):
 
 # ----------------------------------------------------------------------------- scene / meshes
 
+def transparent(o):
+    """Objects you can see through (glass, alpha) never hide what is behind them.
+    Custom property tc_transparent forces it on (1) or off (0)."""
+    if "tc_transparent" in o:
+        return bool(o["tc_transparent"])
+    for ms in getattr(o, "material_slots", []):
+        m = ms.material
+        if not (m and m.use_nodes and m.node_tree):
+            continue
+        for n in m.node_tree.nodes:
+            if n.type in {"BSDF_TRANSPARENT", "BSDF_GLASS", "BSDF_REFRACTION"}:
+                return True
+            if n.type == "BSDF_PRINCIPLED":
+                tw = n.inputs.get("Transmission Weight") or n.inputs.get("Transmission")
+                al = n.inputs.get("Alpha")
+                if (tw is not None and not tw.is_linked and tw.default_value > 0.5) or \
+                        (al is not None and (al.is_linked or al.default_value < 0.99)):
+                    return True
+    return False
+
+
 def renderable(o, collection=None):
     if o.type != "MESH" or not len(o.data.polygons):
         return False
@@ -415,6 +436,49 @@ def build_bvh(geos_all, names):
     return bvh, tri_obj, tri_poly, {name: i for i, (name, _) in enumerate(owner)}
 
 
+def _clipped_depth(poly, cm):
+    """Depth of the nearest point of a camera-space polygon inside the view, or None if none is."""
+    pts = _clip(poly, cm)
+    return min(-p[2] for p in pts) if pts else None
+
+
+def _clipped_area_px(poly, cm):
+    """Screen area in pixels of the part of a camera-space polygon inside the view."""
+    pts = _clip(poly, cm)
+    if len(pts) < 3:
+        return 0.0
+    k = cm["px_per_unit"]
+    xy = [((p[0], p[1]) if cm["ortho"] else (p[0] / -p[2] * cm["d"], p[1] / -p[2] * cm["d"])) for p in pts]
+    a = sum(x0 * y1 - x1 * y0 for (x0, y0), (x1, y1) in zip(xy, xy[1:] + xy[:1]))
+    return abs(a) * 0.5 * k * k
+
+
+def _clip(poly, cm):
+    """Clip a camera-space polygon to the view frustum (Sutherland-Hodgman); returns its points."""
+    D = cm["d"]
+    if cm["ortho"]:
+        planes = [lambda p: cm["near"] - (-p[2]), lambda p: (-p[2]) - cm["far"],
+                  lambda p: p[0] - cm["xmax"], lambda p: cm["xmin"] - p[0],
+                  lambda p: p[1] - cm["ymax"], lambda p: cm["ymin"] - p[1]]
+    else:
+        planes = [lambda p: cm["near"] - (-p[2]), lambda p: (-p[2]) - cm["far"],
+                  lambda p: p[0] * D - cm["xmax"] * (-p[2]), lambda p: cm["xmin"] * (-p[2]) - p[0] * D,
+                  lambda p: p[1] * D - cm["ymax"] * (-p[2]), lambda p: cm["ymin"] * (-p[2]) - p[1] * D]
+    pts = [np.asarray(p, float) for p in poly]
+    for f in planes:  # keep the side where f <= 0
+        if not pts:
+            return None
+        out = []
+        for a, b in zip(pts, pts[1:] + pts[:1]):
+            fa, fb = f(a), f(b)
+            if fa <= 0:
+                out.append(a)
+            if (fa <= 0) != (fb <= 0):
+                out.append(a + (b - a) * (fa / (fa - fb)))
+        pts = out
+    return pts
+
+
 def face_visibility(g, cm, bvh_pack, name):
     """Faces in the frustum and not occluded (centre, then corners). Returns vis, depth, projection."""
     R, t = cm["inv"][:3, :3], cm["inv"][:3, 3]
@@ -440,16 +504,20 @@ def face_visibility(g, cm, bvh_pack, name):
     cand = ic | any_v
     dmin = np.minimum.reduceat(np.where(iv, dv, np.inf)[lv], ls) if g["npoly"] else dc
     dmin = np.maximum(np.where(np.isfinite(dmin), dmin, dc), cm["near"])
-    if g["npoly"]:  # big faces that cross the frame with no corner or centre inside it (floors, walls)
+    if g["npoly"]:  # big faces with no corner or centre in view: floors, walls, faces reaching behind the camera
         x, y = proj(pv, dv)
-        front = np.minimum.reduceat((dv > cm["near"])[lv].astype(np.int8), ls) > 0
         red = lambda f, v: f.reduceat(v[lv], ls)
-        span = (front & (red(np.minimum, x) <= cm["xmax"]) & (red(np.maximum, x) >= cm["xmin"])
+        front_all = red(np.minimum, (dv > cm["near"]).astype(np.int8)) > 0
+        front_any = red(np.maximum, (dv > cm["near"]).astype(np.int8)) > 0
+        span = (front_all & (red(np.minimum, x) <= cm["xmax"]) & (red(np.maximum, x) >= cm["xmin"])
                 & (red(np.minimum, y) <= cm["ymax"]) & (red(np.maximum, y) >= cm["ymin"])
                 & (red(np.minimum, dv) < cm["far"]))
-        extra = span & ~cand
-        cand = cand | extra
-        dmin[extra] = np.maximum(red(np.minimum, dv)[extra], cm["near"])  # nearest corner: errs on more detail
+        maybe = ~cand & front_any & (span | ~front_all)
+        for i in np.nonzero(maybe)[0]:
+            near_d = _clipped_depth(pv[lv[ls[i]:ls[i] + g["lt"][i]]], cm)
+            if near_d is not None:
+                cand[i] = True
+                dmin[i] = max(near_d, cm["near"])  # nearest point actually in view
     vis = cand.copy()
     if bvh_pack is not None:
         bvh, tri_obj, tri_poly, occ_index = bvh_pack
@@ -643,7 +711,7 @@ def _analyze(context, props):
     scene = context.scene
     depsgraph = context.evaluated_depsgraph_get()
     objs = target_objects(context)
-    occ = objs
+    occ = [o for o in objs if not transparent(o)]  # glass doesn't hide the room behind it
     cams = cameras_of(context, props)
     if not cams:
         raise RuntimeError("No cameras to analyze")
@@ -662,7 +730,7 @@ def _analyze(context, props):
         if f != scene.frame_current:
             scene.frame_set(f)
             depsgraph = context.evaluated_depsgraph_get()
-        geos = {o.name: read_mesh(o, depsgraph) for o in occ}
+        geos = {o.name: read_mesh(o, depsgraph) for o in objs}
         bad = [n for n, g in geos.items() if g["npoly"] != len(req[n])]
         if bad:
             raise RuntimeError(f"Modifiers change the face count of {', '.join(bad[:4])}; "
@@ -701,6 +769,8 @@ def _analyze(context, props):
                 ok = (dv[tv] > cm["near"]).all(axis=1)
                 a = np.stack([x, y], 1)
                 ta = np.where(ok, tri_area(a[tv[:, 0]], a[tv[:, 1]], a[tv[:, 2]]), 0)
+                for t in np.nonzero(~ok & vis[g["tp"]])[0]:  # triangles reaching behind the camera
+                    ta[t] = _clipped_area_px(pv[tv[t]], cm) if not cm["ortho"] else 0.0
                 fpx = np.bincount(g["tp"], ta, g["npoly"]) * vis
                 scr[o.name] = np.maximum(scr[o.name], fpx)
                 cam_px[o.name][cam.name] = max(cam_px[o.name][cam.name], float(fpx.sum()))

@@ -40,7 +40,7 @@ class TexelError(RuntimeError):
 SETTING_KEYS = (
     "res_x", "res_y", "camera_mode", "use_frames", "frame_step", "rig_script", "rig_args", "occlusion",
     "target_ratio", "time_quantile", "quantile", "split_ratio", "unseen_scale", "pack_margin_px",
-    "suggest_fill", "suggest_snap", "cull_preset", "cull_shift", "cull_overscan", "cull_rings",
+    "suggest_fill", "suggest_snap", "suggest_tolerance", "cull_preset", "cull_shift", "cull_overscan", "cull_rings",
     "cull_distance", "cull_pixel", "cull_pixel_scale", "cull_skip", "export_enabled", "export_cull",
     "export_resize", "export_triangulate", "export_max_size", "export_min_size", "export_stale", "export_report",
     "export_compress", "chopper_path", "chopper_recipe",

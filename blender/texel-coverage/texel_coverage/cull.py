@@ -239,7 +239,7 @@ def _compute(context, props):
     skip = skip_names(props)
     everything = core.target_objects(context)
     objs = [o for o in everything if not skipped(o, skip)]
-    occ = [o for o in everything if not rigged(o)]  # moving rigs never hide anything
+    occ = [o for o in everything if not rigged(o) and not core.transparent(o)]  # nor do rigs or glass
     cams = [c for c in core.cameras_of(context, props)]
     if not cams:
         raise RuntimeError("No cameras to cull from (check the Cameras setting); refusing to cull everything")
@@ -253,7 +253,7 @@ def _compute(context, props):
     for f in frames:
         scene.frame_set(f)
         dg = context.evaluated_depsgraph_get()
-        geos = {o.name: core.read_mesh(o, dg) for o in occ}
+        geos = {o.name: core.read_mesh(o, dg) for o in {*occ, *objs}}
         bvhs = {}
         for cam in cams:
             cs = core.camera_settings(cam, props)
@@ -274,7 +274,7 @@ def _compute(context, props):
     if not moments:
         raise RuntimeError("No active camera moments (every camera has tc_active off); refusing to cull everything")
     if cp["pixel"]:
-        movers = [o.name for o in scene.objects if o.type == "MESH" and rigged(o)]
+        movers = [o.name for o in scene.objects if o.type == "MESH" and (rigged(o) or core.transparent(o))]
         px_seen = pixel_visibility(context, props, objs, frames, cams, movers, cp["pixel_scale"])
         for n in seen:
             seen[n] |= px_seen[n]

@@ -56,6 +56,11 @@ class TC_Props(bpy.types.PropertyGroup):
                                           description="Density for islands no camera sees, relative to the median need")
     pack_margin_px: bpy.props.IntProperty(name="Island Gap (px)", default=4, min=0, max=64,
                                           description="Gap between islands, in texels of the final texture")
+    suggest_tolerance: bpy.props.FloatProperty(
+        name="Size Tolerance", default=0.85, min=0.5, max=1.0, subtype="FACTOR",
+        description="Take the next smaller texture when the layout fits it at this share of the camera "
+                    "need or more (0.85: up to 15% softer than 1 texel per pixel, a quarter of the memory). "
+                    "1.0 never goes under the need")
     suggest_fill: bpy.props.BoolProperty(name="Fill Leftover Space", default=True,
                                          description="Grow the whole layout uniformly into the leftover space")
     suggest_snap: bpy.props.BoolProperty(
@@ -528,6 +533,7 @@ def draw_uv_tools(layout, context):
     col.prop(p, "split_ratio")
     col.prop(p, "unseen_scale")
     col.prop(p, "pack_margin_px")
+    col.prop(p, "suggest_tolerance")
     col.prop(p, "suggest_fill")
     col.prop(p, "suggest_snap")
     col.operator("texel_coverage.suggest_uvs", icon="UV")

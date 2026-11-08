@@ -268,7 +268,7 @@ def bake(context, props):
         for name, job in jobs.items():
             objs = {u[0] for u in job["users"]}
             for o in scene.objects:  # Cycles loads every visible object and texture: only these
-                o.hide_render = o not in objs or hidden[o.name]
+                o.hide_render = o not in objs  # baked objects must render, even if hidden in the file
             for o, slot, uv, mat, _ in job["users"]:  # bakes are written into the active map
                 o.data.uv_layers.active = o.data.uv_layers[uv + uv_suggest.SUFFIX]
             new = baked[name] = _bake_one(context, bpy.data.images[name], job, margin)
