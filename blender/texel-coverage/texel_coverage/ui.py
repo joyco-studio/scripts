@@ -98,6 +98,10 @@ class TC_Props(bpy.types.PropertyGroup):
                     "The .blend is restored right after")
     export_cull: bpy.props.BoolProperty(name="Cull Unseen Faces", default=True)
     export_resize: bpy.props.BoolProperty(name="Resize Textures to Need", default=True)
+    export_cameras: bpy.props.BoolProperty(
+        name="Include Cameras", default=True,
+        description="Add the analysed cameras to the GLB, so viewers can look through the render's point of view "
+                    "(Export button and CLI; File > Export uses its own Cameras checkbox)")
     export_triangulate: bpy.props.BoolProperty(
         name="Fixed Triangulation", default=True,
         description="Triangulate with a fixed rule during export, so the UI and the command line write "
@@ -663,6 +667,7 @@ def draw_export_options(layout, p):
     sub.enabled = p.export_enabled
     sub.prop(p, "export_cull")
     sub.prop(p, "export_resize")
+    sub.prop(p, "export_cameras")
     sub.prop(p, "export_triangulate")
     row = sub.row(align=True)
     row.enabled = p.export_resize

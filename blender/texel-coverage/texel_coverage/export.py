@@ -605,9 +605,13 @@ def run(context, filepath, collection=None, **overrides):
     props = context.scene.texel_coverage
     kw = gltf_kwargs(context.scene, collection)
     kw.update(filepath=filepath, export_format="GLB")
+    cams = core.cameras_of(context, props) if getattr(props, "export_cameras", False) else []
+    if cams:
+        kw["export_cameras"] = True
     if collection is not None:
+        names = set(collection.all_objects.keys()) | {c.name for c in cams}  # before selection changes
         for o in context.view_layer.objects:
-            o.select_set(o.name in collection.all_objects)
+            o.select_set(o.name in names)
         kw["use_selection"] = True
     kw.update(overrides)
     _MANAGED["on"] = True
