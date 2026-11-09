@@ -28,7 +28,7 @@ CHECKER_NODE = "TC Checker"
 def _tex_sizes(context, obj, uvname):
     """Texture size per material slot for the UV map being edited."""
     sizes = []
-    planned = context.scene.get("tc_suggest_sizes")
+    planned = core.suggest_sizes(context.scene)
     for g in core.face_groups(obj):
         if g is None:
             sizes.append(0)

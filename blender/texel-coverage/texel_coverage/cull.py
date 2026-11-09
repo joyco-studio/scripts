@@ -114,12 +114,19 @@ def pixel_visibility(context, props, objs, frames, cams, movers=(), scale=1.0):
         r.image_settings.file_format = "OPEN_EXR"
         r.image_settings.color_mode, r.image_settings.color_depth = "RGBA", "32"
         bounds = np.array([b for _, b in owners] + [base])
+        dedupe = all(core._static_mesh(scene.objects[n]) for n in seen)   # same moment, same pixels
+        done = set()
         for f in frames:
             scene.frame_set(f)
             for cam in cams:
                 cs = core.camera_settings(cam, props)
                 if not cs["active"]:
                     continue
+                if dedupe:
+                    key = core.moment_key(cam, cs)
+                    if key in done:
+                        continue
+                    done.add(key)
                 hide = [scene.objects[n] for n in set(cs["hide"]) | set(movers) if n in scene.objects]
                 prev = [o.hide_render for o in hide]
                 scene.camera = cam
@@ -250,15 +257,24 @@ def _compute(context, props):
     shift_of = {o.name: float(o.get("tc_cull_shift", cp["shift"])) for o in objs}
     shifts = sorted(set(shift_of.values()))
     samples = 0
+    dedupe = all(core._static_mesh(o) for o in {*occ, *objs})   # visibility is an OR: duplicates add nothing
+    done = set()
     for f in frames:
         scene.frame_set(f)
         dg = context.evaluated_depsgraph_get()
-        geos = {o.name: core.read_mesh(o, dg) for o in {*occ, *objs}}
+        geos = None
         bvhs = {}
         for cam in cams:
             cs = core.camera_settings(cam, props)
             if not cs["active"]:
                 continue
+            if dedupe:
+                key = core.moment_key(cam, cs)
+                if key in done:
+                    continue
+                done.add(key)
+            if geos is None:   # read the meshes only for frames that have a new moment
+                geos = {o.name: core.read_mesh(o, dg) for o in {*occ, *objs}}
             cm = core.framed_camera(cam, scene, cs)
             moments += 1
             if cs["hide"] not in bvhs:

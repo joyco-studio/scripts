@@ -61,6 +61,15 @@ LEGENDS = {  # view -> (title, explanation, [(colour, (range, meaning))])
                     "1 m of this surface needs this many texels",
                     [(c, l) for _, c, l in reversed(REQ_BANDS)] + [(UNSEEN, ("never seen", ""))]),
 }
+# Cache boundary. Each stage stores its result on the faces and its key in the scene's tc_cache; a stage
+# reruns only when its key changes, and every later stage reuses it:
+#   analysis  key = world-space geometry + cameras/frames + analysis settings   -> face attr tc_required
+#   cull      key = analysis key + cull settings + per-object cull overrides     -> face attr tc_keep
+# Suggest UVs, Bake and Export read those attributes and never recompute a fresh stage. The geometry key is
+# world-space and order-independent for plain static meshes, so renaming, splitting, joining or applying
+# transforms keeps both stages valid (face attributes survive a join). Identical camera moments (same pose,
+# lens, framing) are evaluated once. Edits that change the geometry key without changing what a camera sees
+# (a join moves vertices by float noise) call restamp() so the results are carried over, not recomputed.
 CACHE_KEY = "tc_cache"
 CULL_ATTR = "tc_keep"
 CULL_MOD = "TC Cull Unseen"
@@ -618,8 +627,11 @@ def geometry_fingerprint(context, props):
     h.update(("cams:" + ",".join(sorted(c.name for c in cameras_of(context, props)))).encode())  # which ones count
     for k in ANALYSIS_PROPS:
         h.update(f"{k}={getattr(props, k)}".encode())
+    world = _WorldGeometry()
     for o in sorted(scene.objects, key=lambda o: o.name):
-        if o.type == "MESH" and renderable(o, props.collection):
+        if o.type == "MESH" and renderable(o, props.collection) and _static_mesh(o):
+            world.add(o)   # plain static meshes: keyed by world-space geometry only (names, splits, joins don't count)
+        elif o.type == "MESH" and renderable(o, props.collection):
             me = o.data
             h.update(f"M{o.name}:{len(me.vertices)}:{len(me.polygons)}".encode())
             co = np.empty(len(me.vertices) * 3, np.float32)
@@ -642,7 +654,72 @@ def geometry_fingerprint(context, props):
             _hash_anim(h, o)
             _hash_anim(h, c)
             _hash_props(h, o)
+    h.update(world.digest())
     return h.hexdigest()
+
+
+def _static_mesh(o):
+    """No modifiers (but the cull's own), no animation on it or its parents: its world-space vertices are all
+    that matter, so it can be keyed by geometry alone."""
+    if any(m.name != CULL_MOD for m in o.modifiers):
+        return False
+    p = o
+    while p is not None:
+        ad = getattr(p, "animation_data", None)
+        if ad is not None and (ad.action is not None or len(ad.drivers)):
+            return False
+        p = p.parent
+    return True
+
+
+class _WorldGeometry:
+    """Order-independent hash of world-space geometry: a sum of per-vertex and per-face hashes, so the same
+    triangles give the same key however they are split into objects, named or transformed."""
+    M = np.uint64(0x9E3779B97F4A7C15)
+
+    def __init__(self):
+        self.v = np.uint64(0)
+        self.f = np.uint64(0)
+        self.n = [0, 0]
+
+    @classmethod
+    def _mix(cls, x):
+        x = (x ^ (x >> np.uint64(31))) * cls.M
+        return x ^ (x >> np.uint64(29))
+
+    def add(self, o):
+        me = o.data
+        nv, nf = len(me.vertices), len(me.polygons)
+        if not nv:
+            return
+        co = np.empty(nv * 3, np.float64)
+        me.vertices.foreach_get("co", co)
+        mw = np.array(o.matrix_world)
+        w = co.reshape(-1, 3) @ mw[:3, :3].T + mw[:3, 3]
+        q = np.round(w * 1e4).astype(np.int64).view(np.uint64)          # 0.1 mm grid
+        with np.errstate(over="ignore"):
+            vh = self._mix(q[:, 0] * np.uint64(73856093) ^ self._mix(q[:, 1] * np.uint64(19349663) ^
+                                                                       self._mix(q[:, 2] + self.M)))
+            lv = np.empty(len(me.loops), np.int32)
+            me.loops.foreach_get("vertex_index", lv)
+            ls = np.empty(nf, np.int32)
+            me.polygons.foreach_get("loop_start", ls)
+            fh = np.add.reduceat(vh[lv], ls) if nf else np.zeros(0, np.uint64)
+            self.v += vh.sum(dtype=np.uint64)
+            self.f += self._mix(fh).sum(dtype=np.uint64)
+        self.n[0] += nv
+        self.n[1] += nf
+
+    def digest(self):
+        return f"W{self.n[0]}:{self.n[1]}:{int(self.v)}:{int(self.f)}".encode()
+
+
+def moment_key(cam, cs):
+    """What a camera moment depends on: pose, lens and framing. Identical moments give identical results."""
+    c = cam.data
+    m = np.round(np.array(cam.matrix_world), 5).tobytes()
+    return (m, c.type, round(c.lens, 4), round(c.sensor_width, 4), round(c.sensor_height, 4), c.sensor_fit,
+            round(c.shift_x, 5), round(c.shift_y, 5), round(c.ortho_scale, 4), cs["res"], cs["hide"])
 
 
 def cull_fingerprint(context, props, base=None):
@@ -655,6 +732,46 @@ def cull_fingerprint(context, props, base=None):
             if k in o:
                 h.update(f"{o.name}.{k}={o[k]}".encode())
     return h.hexdigest()
+
+
+SIZES_KEY = "tc_suggest_sizes"
+
+
+def suggest_sizes(scene):
+    """{image name: planned texture size} from Suggest UVs. Stored as JSON text: IDProperty keys are
+    capped at 63 characters and image names can be longer. Older files kept a dict: read that too."""
+    v = scene.get(SIZES_KEY)
+    if isinstance(v, str):
+        try:
+            return json.loads(v)
+        except ValueError:
+            return {}
+    return v.to_dict() if hasattr(v, "to_dict") else {}
+
+
+def set_suggest_sizes(scene, sizes):
+    scene[SIZES_KEY] = json.dumps(sizes, sort_keys=True)
+
+
+def restamp(context, props, before, reason=""):
+    """Declare a visibility-neutral geometry edit (joining or splitting objects, renaming, subdividing faces
+    in place): the stored analysis and cull stay valid, only their keys are moved to the new geometry.
+    `before` is cache_status() taken before the edit; only stages that were fresh then are carried over.
+    Returns the names of the stages kept."""
+    cache = load_cache(context.scene)
+    kept = []
+    geo = geometry_fingerprint(context, props)
+    if "analysis" in cache and before.get("analysis") == "fresh":
+        cache["analysis"]["fp"] = geo
+        kept.append("analysis")
+    if "cull" in cache and before.get("cull") == "fresh":
+        cache["cull"]["fp"] = cull_fingerprint(context, props, geo)
+        kept.append("cull")
+    if reason:
+        cache.setdefault("restamps", []).append(reason)
+    save_cache(context.scene, cache)
+    mark_dirty()
+    return kept
 
 
 def load_cache(scene):
@@ -725,6 +842,10 @@ def _analyze(context, props):
     scr = {o.name: np.zeros(len(o.data.polygons)) for o in objs}
     cam_px = {o.name: {c.name: 0.0 for c in cams} for o in objs}
     labels = []
+    # a moment identical to one already done adds nothing to a max: skip it (static scenes only, and not when
+    # Moments Covered < 1 needs every moment as a separate sample)
+    dedupe = not keep_samples and all(_static_mesh(o) for o in objs)
+    done = set()
 
     for f in frames:
         if f != scene.frame_current:
@@ -740,6 +861,11 @@ def _analyze(context, props):
             cs = camera_settings(cam, props)
             if not cs["active"]:
                 continue
+            if dedupe:
+                key = moment_key(cam, cs)
+                if key in done:
+                    continue
+                done.add(key)
             cm = framed_camera(cam, scene, cs)
             sample = len(labels)
             labels.append(sample_label(cam, f))

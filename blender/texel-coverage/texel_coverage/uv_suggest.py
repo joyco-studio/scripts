@@ -29,6 +29,9 @@ LOCK_ATTR = "tc_lock"
 CUT_ATTR = "tc_proposed_cut"
 MIN_TEX, MAX_TEX = 64, 8192
 CHUNKS_PER_SIDE = 6  # grid step for cutting islands = side the texture needs / this
+PACK_FILL = 0.8      # share of the square an outline pack fills, for the size estimate
+PACK_SAFETY = 1.15
+MIN_CHUNK = 0.04     # chunks under this share of a grid cell are merged into a neighbour   # only try the smaller size when the pack leaves at least this much room
 SPLIT_PER_SIDE = 3   # faces longer than side / this set the texture size: split them
 
 
@@ -256,8 +259,7 @@ def _culled_faces(context, props, objs):
 
 def _suggest_key(context, props, key, members, bmesh, linked_islands, cuts, drop):
     pieces, obstacles, writes, dropped = [], [], [], 0
-    prev = context.scene.get("tc_suggest_sizes", {})
-    prev_size = int(prev.get(key, 0)) if hasattr(prev, "get") else 0
+    prev_size = int(core.suggest_sizes(context.scene).get(key, 0))
     for (oname, uvname), slots in sorted(members.items()):
         o = bpy.data.objects[oname]
         me = o.data
@@ -377,10 +379,9 @@ def _suggest_key(context, props, key, members, bmesh, linked_islands, cuts, drop
     if grow is None:
         return dict(texture=key, size=size, pieces=len(pieces), note="does not fit; unlock islands or lower the margin")
     write()
-    old = context.scene.get("tc_suggest_sizes")
-    sizes = old.to_dict() if hasattr(old, "to_dict") else {}
+    sizes = core.suggest_sizes(context.scene)
     sizes[key] = size
-    context.scene["tc_suggest_sizes"] = sizes
+    core.set_suggest_sizes(context.scene, sizes)
     tiers = {}
     for p in pieces:
         tiers[p["tier"]] = tiers.get(p["tier"], 0) + 1
@@ -411,6 +412,17 @@ def _chunk(pieces, cuts, floor, snap, per_side=CHUNKS_PER_SIDE):
         groups = {}
         for i, c in enumerate(cell):
             groups.setdefault(c, []).append(i)
+        small = [c for c, ix in groups.items() if len(groups) > 1 and
+                 _poly_area(q[np.concatenate([np.arange(starts[i], starts[i] + lt[i]) for i in ix])],
+                            lt[ix]) < MIN_CHUNK * step * step]
+        for c in small:   # a sliver costs a whole island (margin, packer time): join the nearest big cell
+            if len(groups) <= 1:
+                break
+            others = [k for k in groups if k != c and k not in small] or [k for k in groups if k != c]
+            to = min(others, key=lambda k: (k[0] - c[0]) ** 2 + (k[1] - c[1]) ** 2)
+            for i in groups.pop(c):
+                cell[i] = to
+                groups[to].append(i)
         if len(groups) == 1:
             out.append(p)
             continue
@@ -477,32 +489,32 @@ def _outline_size(context, props, pieces, writes, by_map):
     q = max(1e-6, float(core.wquantile(ratio, weight, 1.0 - props.quantile)))
     tol = min(tol / q, tol)  # never stricter than the plain tolerance
     m = props.pack_margin_px
-    total = sum((p["w"] + m) * (p["h"] + m) for p in pieces)
+    clamp = lambda sz: min(MAX_TEX, max(MIN_TEX, sz))
+    # 1. estimate the natural size (where every piece fits at its need) from the pieces' real area: outline
+    #    packing fills ~80% of the square, so one concave pack usually lands on the final size at once
+    area = sum(_poly_area(p["texels"], p["lt"]) + m * (p["w"] + p["h"]) for p in pieces)
+    size = clamp(core.pow2_ceil(tol * math.sqrt(area / PACK_FILL)))
     tried = {}
 
     def run(sz):
         tried[sz] = _outline_pack(context, props, pieces, writes, by_map, sz)
         return tried[sz]
 
-    clamp = lambda sz: min(MAX_TEX, max(MIN_TEX, sz))
-    size = clamp(core.pow2_ceil(math.sqrt(total)))
     g = run(size)
-    if g > 0.05:  # the natural size (where everything fits at need) points at the answer...
-        size = clamp(core.pow2_ceil(tol * size / g))
-    # ...then real packs confirm it: margins are fixed pixels, so the scale isn't linear in the size
-    while True:
-        g = tried[size] if size in tried else run(size)
-        if g >= tol:
-            half = size // 2
-            if half < MIN_TEX or (half in tried and tried[half] < tol):
-                break
-            size = half
-        elif size >= MAX_TEX or size * 2 in tried:
-            size = min(MAX_TEX, size * 2) if size < MAX_TEX else size
-            break
-        else:
-            size *= 2
-    grow = run(size) if list(tried)[-1] != size else tried[size]  # the uvs hold the last pack
+    # 2. one correction at most: the pack tells the true natural size (size / g); margins are fixed pixels,
+    #    so the scale isn't exactly linear, which is why the result is checked rather than assumed
+    if g < tol and size < MAX_TEX:
+        size = clamp(max(size * 2, core.pow2_ceil(tol * size / g)))
+        g = run(size)
+    elif g >= tol and size > MIN_TEX and g / 2 >= tol * PACK_SAFETY:
+        smaller = clamp(core.pow2_ceil(tol * size / g))
+        if smaller < size:
+            g2 = run(smaller)
+            if g2 >= tol:
+                size, g = smaller, g2
+            else:
+                g = run(size)   # the uvs hold the last pack: put the good one back
+    grow = g
     if grow > 1.0 and not props.suggest_fill:
         for o, dst, uv in writes:  # back to exactly the need, packed from the corner
             for p in pieces:

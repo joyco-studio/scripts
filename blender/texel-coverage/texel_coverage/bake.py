@@ -69,8 +69,7 @@ def plan(context):
 
     A suggested layout is only switched when every texture on it can be baked, so a texture is also
     skipped when it shares a layout with one that can't."""
-    sizes = context.scene.get("tc_suggest_sizes")
-    sizes = sizes.to_dict() if hasattr(sizes, "to_dict") else {}
+    sizes = core.suggest_sizes(context.scene)
     jobs, skipped = {}, {}
     for img_name, users in sorted(export.material_users(context).items()):
         img = bpy.data.images.get(img_name)
