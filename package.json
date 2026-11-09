@@ -4,13 +4,16 @@
   "packageManager": "pnpm@10.11.0",
   "scripts": {
     "changeset": "changeset",
-    "version:package": "changeset version",
+    "version:package": "changeset version && node scripts/blender-addons.mjs sync",
     "build:cli": "pnpm -C cli build",
     "test:cli": "pnpm -C cli test",
-    "release": "pnpm build:cli && changeset publish"
+    "release": "pnpm build:cli && changeset publish",
+    "blender:check": "node scripts/blender-addons.mjs check",
+    "blender:build": "node scripts/blender-addons.mjs build"
   },
   "workspaces": [
-    "cli"
+    "cli",
+    "blender/*"
   ],
   "devDependencies": {
     "@changesets/cli": "^2.29.8"

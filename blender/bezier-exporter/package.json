@@ -1,0 +1,10 @@
+{
+  "name": "bezier-exporter",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Blender add-on: export Bezier curves to JSON for Three.js",
+  "blender": {
+    "type": "legacy",
+    "source": "BezierExporter.py"
+  }
+}
