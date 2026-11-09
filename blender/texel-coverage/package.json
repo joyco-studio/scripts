@@ -1,6 +1,6 @@
 {
   "name": "texel-coverage",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Blender extension: size textures, lay out UVs and cull geometry from the cameras that see them",
   "blender": {
