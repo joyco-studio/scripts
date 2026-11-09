@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "texel_coverage"
-version = "0.2.0"
+version = "0.3.0"
 name = "Texel Coverage"
 tagline = "Size textures, UVs and culling from the cameras that see them"
 maintainer = "JOYCO"
