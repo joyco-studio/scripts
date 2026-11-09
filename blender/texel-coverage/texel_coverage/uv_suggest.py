@@ -205,6 +205,8 @@ def _split_long_faces(context, props, by_key, drop):
         if not np.isfinite(lim).any():
             continue
         o = bpy.data.objects[oname]
+        if not core._static_mesh(o):   # modifiers (displace, ...) or animation: splitting could change the shape
+            continue
         me = o.data
         mw = o.matrix_world
         bm = bmesh.new()
@@ -227,14 +229,7 @@ def _split_long_faces(context, props, by_key, drop):
             split += len(cuts)
         bm.free()
     if split:
-        cache = core.load_cache(context.scene)
-        geo = core.geometry_fingerprint(context, props)
-        if status["analysis"] == "fresh" and "analysis" in cache:
-            cache["analysis"]["fp"] = geo
-        if status["cull"] == "fresh" and "cull" in cache:
-            cache["cull"]["fp"] = core.cull_fingerprint(context, props, geo)
-        core.save_cache(context.scene, cache)
-        core.mark_dirty()
+        core.restamp(context, props, status, f"Suggest UVs: split {split} long edges")
         print(f"Texel Coverage: split {split} long edge(s) so their islands can be chunked")
     return split
 
@@ -243,7 +238,7 @@ def _culled_faces(context, props, objs):
     """{object name: faces the export cull will delete}. Those get no texture space: they are shrunk
     to a point in the suggested map, so the atlas only pays for what reaches the GLB. Computes the
     cull if it is stale (export then reuses it). Empty when Cull Unseen Faces is off."""
-    if not props.export_cull:
+    if not (props.export_enabled and props.export_cull):   # a plain export keeps every face: keep its texels
         return {}
     from . import cull
     if core.cache_status(context, props, force=True)["cull"] != "fresh":
@@ -365,17 +360,21 @@ def _suggest_key(context, props, key, members, bmesh, linked_islands, cuts, drop
     # texels the camera asks for, face by face: what a perfect layout would spend
     ideal = sum(float((np.maximum(p["r"], floor) ** 2 * p["wa"]).sum()) for p in pieces)
     method = "outline"
-    if obstacles and prev_size:
-        method, size, grow = "shelf", prev_size, _shelf(props, pieces, obstacles, prev_size, by_map, True)
+    total = sum((p["w"] + props.pack_margin_px) * (p["h"] + props.pack_margin_px) for p in pieces)
+    estimate = max(MIN_TEX, core.pow2_ceil(math.sqrt(total / 0.75)))
+    objs_maps = [o.name for o, _, _ in writes]
+    # Blender's packer works on one active UV map per object, and knows nothing of locked islands:
+    # shelves handle both cases (locks keep their size; a first run with locks starts from the estimate)
+    if obstacles or len(objs_maps) != len(set(objs_maps)):
+        method = "shelf"
+        size, grow = _shelf(props, pieces, obstacles, prev_size or estimate, by_map, bool(obstacles and prev_size))
     else:
         try:
             size, grow = _outline_size(context, props, pieces, writes, by_map)
         except RuntimeError as e:  # objects that can't enter Edit Mode (hidden, excluded): fall back
             print("Texel Coverage: outline packing unavailable, using shelves:", e)
             method = "shelf"
-            total = sum((p["w"] + props.pack_margin_px) * (p["h"] + props.pack_margin_px) for p in pieces)
-            size = max(MIN_TEX, core.pow2_ceil(math.sqrt(total / 0.75)))
-            grow = _shelf(props, pieces, obstacles, size, by_map, False)
+            size, grow = _shelf(props, pieces, obstacles, estimate, by_map, False)
     if grow is None:
         return dict(texture=key, size=size, pieces=len(pieces), note="does not fit; unlock islands or lower the margin")
     write()
@@ -454,7 +453,7 @@ def _chunk(pieces, cuts, floor, snap, per_side=CHUNKS_PER_SIDE):
 
 def _shelf(props, pieces, obstacles, size, by_map, fixed):
     """Rectangle shelf packing (the fallback, and the locked-islands path). Writes positions; returns
-    the uniform scale used, or None if it can't fit."""
+    (size, scale): the size may have doubled to fit unless `fixed`; scale is None if nothing fits."""
     def attempt(sz, g):
         return shelf_pack([(p["w"] * g / sz, p["h"] * g / sz) for p in pieces], obstacles,
                           props.pack_margin_px / sz)
@@ -466,7 +465,7 @@ def _shelf(props, pieces, obstacles, size, by_map, fixed):
             continue
         grow *= 0.9
         if grow < 0.05:
-            return None
+            return size, None
     if grow == 1.0 and props.suggest_fill:
         lo, hi = 1.0, 2.0
         for _ in range(10):
@@ -475,7 +474,7 @@ def _shelf(props, pieces, obstacles, size, by_map, fixed):
         grow = lo
     for p, (x, y) in zip(pieces, attempt(size, grow)):
         by_map[(p["obj"], p["dst"])][p["loops"]] = p["texels"] * grow / size + np.array([x, y])
-    return grow
+    return size, grow
 
 
 def _outline_size(context, props, pieces, writes, by_map):
@@ -587,7 +586,7 @@ def _outline_pack(context, props, pieces, writes, by_map, size):
             me.uv_layers[dst].data.foreach_get("uv", out)
             out = out.reshape(-1, 2).astype(np.float64)
             for p in pieces:
-                if p["obj"] == o.name:
+                if (p["obj"], p["dst"]) == (o.name, dst):
                     before += _poly_area(uv[p["loops"]], p["lt"])
                     uv[p["loops"]] = out[p["loops"]]
                     after += _poly_area(uv[p["loops"]], p["lt"])

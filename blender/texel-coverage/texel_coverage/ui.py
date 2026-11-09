@@ -101,7 +101,7 @@ class TC_Props(bpy.types.PropertyGroup):
     export_cameras: bpy.props.BoolProperty(
         name="Include Cameras", default=True,
         description="Add the analysed cameras to the GLB, so viewers can look through the render's point of view "
-                    "(Export button and CLI; File > Export uses its own Cameras checkbox)")
+                    "(the panel's Export button and the CLI; File > Export uses its own Cameras checkbox)")
     export_triangulate: bpy.props.BoolProperty(
         name="Fixed Triangulation", default=True,
         description="Triangulate with a fixed rule during export, so the UI and the command line write "
@@ -365,8 +365,9 @@ class TC_OT_export(bpy.types.Operator):
     bl_description = "Open the glTF exporter with Texel optimization on"
 
     def execute(self, context):
-        props_of(context).export_enabled = True
-        bpy.ops.export_scene.gltf("INVOKE_DEFAULT")
+        p = props_of(context)
+        p.export_enabled = True
+        bpy.ops.export_scene.gltf("INVOKE_DEFAULT", export_cameras=p.export_cameras)
         return {"FINISHED"}
 
 

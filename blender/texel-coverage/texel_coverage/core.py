@@ -454,7 +454,7 @@ def _clipped_depth(poly, cm):
 def _clipped_area_px(poly, cm):
     """Screen area in pixels of the part of a camera-space polygon inside the view."""
     pts = _clip(poly, cm)
-    if len(pts) < 3:
+    if not pts or len(pts) < 3:   # entirely outside the view (e.g. behind the near plane)
         return 0.0
     k = cm["px_per_unit"]
     xy = [((p[0], p[1]) if cm["ortho"] else (p[0] / -p[2] * cm["d"], p[1] / -p[2] * cm["d"])) for p in pts]
@@ -633,7 +633,12 @@ def geometry_fingerprint(context, props):
             world.add(o)   # plain static meshes: keyed by world-space geometry only (names, splits, joins don't count)
         elif o.type == "MESH" and renderable(o, props.collection):
             me = o.data
-            h.update(f"M{o.name}:{len(me.vertices)}:{len(me.polygons)}".encode())
+            h.update(f"M{o.name}:{len(me.vertices)}:{len(me.polygons)}:{transparent(o)}".encode())
+            a = me.attributes.get(REQ_ATTR)
+            if a is not None and a.domain == "FACE":
+                vals = np.empty(len(a.data), np.float32)
+                a.data.foreach_get("value", vals)
+                h.update(np.round(vals).tobytes())
             co = np.empty(len(me.vertices) * 3, np.float32)
             me.vertices.foreach_get("co", co)
             h.update(np.round(co, 5).tobytes())
@@ -659,17 +664,28 @@ def geometry_fingerprint(context, props):
 
 
 def _static_mesh(o):
-    """No modifiers (but the cull's own), no animation on it or its parents: its world-space vertices are all
-    that matter, so it can be keyed by geometry alone."""
+    """No modifiers (but the cull's own), no animation, drivers, NLA or animated shape keys on it or its mesh,
+    no constraints on it or its parents: its world-space vertices are all that matter, so it can be keyed by
+    geometry alone."""
     if any(m.name != CULL_MOD for m in o.modifiers):
+        return False
+
+    def animated(idblock):
+        ad = getattr(idblock, "animation_data", None)
+        return ad is not None and (ad.action is not None or len(ad.drivers) > 0 or len(ad.nla_tracks) > 0)
+
+    me = o.data
+    if animated(me) or (getattr(me, "shape_keys", None) is not None and animated(me.shape_keys)):
         return False
     p = o
     while p is not None:
-        ad = getattr(p, "animation_data", None)
-        if ad is not None and (ad.action is not None or len(ad.drivers)):
+        if animated(p) or len(p.constraints):
             return False
         p = p.parent
     return True
+
+
+REQ_ATTR = "tc_required"
 
 
 class _WorldGeometry:
@@ -687,7 +703,9 @@ class _WorldGeometry:
         x = (x ^ (x >> np.uint64(31))) * cls.M
         return x ^ (x >> np.uint64(29))
 
-    def add(self, o):
+    def add(self, o, attrs=(REQ_ATTR,)):
+        """`attrs`: per-face results bound to their faces, so moving a stored result to other geometry (two
+        identical meshes swapping places) changes the key while a join (faces keep their values) does not."""
         me = o.data
         nv, nf = len(me.vertices), len(me.polygons)
         if not nv:
@@ -705,6 +723,16 @@ class _WorldGeometry:
             ls = np.empty(nf, np.int32)
             me.polygons.foreach_get("loop_start", ls)
             fh = np.add.reduceat(vh[lv], ls) if nf else np.zeros(0, np.uint64)
+            if nf:
+                for k, name in enumerate(attrs):
+                    a = me.attributes.get(name)
+                    if a is not None and a.domain == "FACE" and len(a.data) == nf:
+                        vals = np.empty(nf, {"FLOAT": np.float32, "BOOLEAN": bool}.get(a.data_type, np.int32))
+                        a.data.foreach_get("value", vals)
+                        fh = fh + self._mix(np.round(vals.astype(np.float64) * 16).astype(np.int64).view(np.uint64)
+                                            + np.uint64(k + 1))
+                if transparent(o):   # see-through objects don't occlude: that changes every result
+                    fh = fh + np.uint64(0xA5A5A5A5)
             self.v += vh.sum(dtype=np.uint64)
             self.f += self._mix(fh).sum(dtype=np.uint64)
         self.n[0] += nv
@@ -719,12 +747,24 @@ def moment_key(cam, cs):
     c = cam.data
     m = np.round(np.array(cam.matrix_world), 5).tobytes()
     return (m, c.type, round(c.lens, 4), round(c.sensor_width, 4), round(c.sensor_height, 4), c.sensor_fit,
-            round(c.shift_x, 5), round(c.shift_y, 5), round(c.ortho_scale, 4), cs["res"], cs["hide"])
+            round(c.shift_x, 5), round(c.shift_y, 5), round(c.ortho_scale, 4),
+            round(c.clip_start, 5), round(c.clip_end, 3), cs["res"], cs["hide"])
 
 
 def cull_fingerprint(context, props, base=None):
     h = hashlib.blake2b(digest_size=12)
     h.update((base or geometry_fingerprint(context, props)).encode())
+    keep = _WorldGeometry()   # the stored masks, bound to their faces (see _WorldGeometry.add)
+    for o in sorted(context.scene.objects, key=lambda o: o.name):
+        if o.type == "MESH" and renderable(o, props.collection) and CULL_ATTR in o.data.attributes:
+            if _static_mesh(o):
+                keep.add(o, attrs=(CULL_ATTR,))
+            else:
+                a = o.data.attributes[CULL_ATTR]
+                vals = np.empty(len(a.data), bool)
+                a.data.foreach_get("value", vals)
+                h.update(f"K{o.name}".encode() + np.packbits(vals).tobytes())
+    h.update(keep.digest())
     h.update(json.dumps(cull_params(props), sort_keys=True).encode())
     h.update(props.cull_skip.encode())
     for o in sorted(target_objects(context), key=lambda o: o.name):

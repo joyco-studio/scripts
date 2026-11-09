@@ -605,9 +605,8 @@ def run(context, filepath, collection=None, **overrides):
     props = context.scene.texel_coverage
     kw = gltf_kwargs(context.scene, collection)
     kw.update(filepath=filepath, export_format="GLB")
-    cams = core.cameras_of(context, props) if getattr(props, "export_cameras", False) else []
-    if cams:
-        kw["export_cameras"] = True
+    cams = core.cameras_of(context, props) if props.export_cameras else []
+    kw["export_cameras"] = bool(cams)   # the switch decides, whatever the file's saved glTF settings say
     if collection is not None:
         names = set(collection.all_objects.keys()) | {c.name for c in cams}  # before selection changes
         for o in context.view_layer.objects:
