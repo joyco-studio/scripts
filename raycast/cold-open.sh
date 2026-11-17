@@ -9,8 +9,9 @@
 # @raycast.icon 🧊
 # @raycast.packageName JOYCO Developer Tools
 # @raycast.argument1 { "type": "text", "placeholder": "url" }
-# Quits Chrome, wipes the Metal shader cache, and opens the URL in a fresh
-# temp profile so you get a true cold load (no cache, no extensions, no shaders).
+# Wipes the Metal shader cache and opens the URL in a fresh temp profile so you
+# get a cold load (no cache, no extensions, no compiled shaders). Your regular
+# Chrome stays open; just close the page's tab first.
 
 URL="$1"
 
@@ -19,23 +20,23 @@ if [ -z "$URL" ]; then
   exit 1
 fi
 
-# Allow pasting without scheme (e.g. "foo.vercel.app")
+# Allow pasting without scheme (e.g. "foo.vercel.app", "localhost:3000")
 if [[ ! "$URL" =~ ^https?:// ]]; then
-  URL="https://$URL"
+  if [[ "$URL" =~ ^(localhost|127\.0\.0\.1)(:|/|$) ]]; then
+    URL="http://$URL"
+  else
+    URL="https://$URL"
+  fi
 fi
 
-# 1. Quit Chrome and wait until it's really gone
-osascript -e 'quit app "Google Chrome"' 2>/dev/null
-for _ in $(seq 1 50); do
-  pgrep -xq "Google Chrome" || break
-  sleep 0.1
-done
+# 1. Wipe the Metal shader caches for Chrome's GPU helper. Chrome can stay
+#    open as long as the page isn't open in it (it would refill the cache
+#    with the same shaders).
+METAL_CACHE="$(getconf DARWIN_USER_CACHE_DIR)/com.google.Chrome.helper"
+rm -rf "$METAL_CACHE/com.apple.metal" "$METAL_CACHE/com.apple.metalfe"
 
-# 2. Wipe the Metal shader cache for Chrome's GPU helper
-rm -rf "$(getconf DARWIN_USER_CACHE_DIR)/com.google.Chrome.helper/com.apple.metal"
-
-# 3. Open the URL in a brand-new temporary profile
+# 2. Open the URL in a brand-new temporary profile (a separate Chrome instance)
 PROFILE="$(mktemp -d)"
-open -na "Google Chrome" --args --user-data-dir="$PROFILE" "$URL"
+open -na "Google Chrome" --args --user-data-dir="$PROFILE" --no-first-run --no-default-browser-check "$URL"
 
-echo "Opened $URL (profile: $PROFILE)"
+echo "Opened $URL cold"
