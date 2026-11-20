@@ -98,6 +98,12 @@ def test_preview_is_safe():
     check(any(o.name.startswith("Child") and ses.is_draft(o) for o in shown), "Child re-parented preview copy")
     child = next(o for o in shown if o.name.startswith("Child"))
     check(child.parent is not None and child.parent.library is not None, "Child follows the incoming Cube")
+    check(child.matrix_parent_inverse == bpy.data.objects["Child", None].matrix_parent_inverse,
+          "Child keeps its parent inverse under the incoming Cube")
+    with bpy.context.temp_override(scene=sc, view_layer=vl):
+        bpy.context.evaluated_depsgraph_get().update()
+    check((child.matrix_world.translation - Vector((1, 3, 2))).length < 1e-5,
+          f"Child sits where the incoming file has it ({tuple(child.matrix_world.translation)})")
     check(any(o.name == "Cone" for o in shown), "Cone shown")
     check(not any(o.name == "OnlyCurrent" for o in shown), "removed object hidden")
     rock = next(o for o in shown if o.name.startswith("Rock0"))

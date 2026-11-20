@@ -4,6 +4,7 @@ import os
 
 import bmesh
 import bpy
+from mathutils import Matrix
 
 
 def cube_mesh(name, size=2.0):
@@ -32,6 +33,7 @@ def build(variant, path):
     child = bpy.data.objects.new("Child", None)
     props.objects.link(child)
     child.parent = cube
+    child.matrix_parent_inverse = Matrix.Translation((0, 3, 0))  # parented with an offset (Ctrl+P)
     child.location = (0, 0, 2)
 
     shared = cube_mesh("SharedMesh", 0.5)
