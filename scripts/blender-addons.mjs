@@ -101,11 +101,24 @@ function release() {
   for (const a of build(names)) {
     const tag = `${a.name}@${a.version}`;
     const gh = (...args) => execFileSync("gh", args, { cwd: ROOT, stdio: "inherit" });
+    const asset = path.basename(a.file);
+    // GitHub always adds "Source code (zip)" to a release; say which file to install so nobody grabs that.
+    const notes = [
+      `Blender add-on ${tag}.`,
+      "",
+      `**Install \`${asset}\`** from the assets below, not "Source code (zip)" (that's the whole repo).`,
+      a.type === "extension"
+        ? "In Blender: Edit > Preferences > Get Extensions > ⌄ > Install from Disk…, or drag the zip into Blender."
+        : "In Blender: Edit > Preferences > Add-ons > ⌄ > Install from Disk…",
+    ].join("\n");
+    let exists = true;
     try {
       execFileSync("gh", ["release", "view", tag], { cwd: ROOT, stdio: "ignore" });
     } catch {
-      gh("release", "create", tag, "--title", tag, "--notes", `Blender add-on ${tag}`);
+      exists = false;
     }
+    if (exists) gh("release", "edit", tag, "--notes", notes);
+    else gh("release", "create", tag, "--title", tag, "--notes", notes);
     gh("release", "upload", tag, a.file, "--clobber");
   }
 }
