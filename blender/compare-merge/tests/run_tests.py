@@ -317,10 +317,32 @@ def test_failed_merge_rolls_back():
     finally:
         merge.attr_of = real_attr_of
     after = sorted(i.name_full for i in ses.all_ids() if i.library is None and not i.is_runtime_data)
-    check(after == before, f"rolled back: same data-blocks and names ({set(after) ^ set(before)})")
+    check(after == before and not any(n.startswith("cm~") for n in after),
+          f"rolled back: same data-blocks and names ({set(after) ^ set(before)})")
     api.recover_after_failed_merge()
     check(ses.library() is not None and preview.preview_scene() is not None and View.choices,
           "comparison and picks survive a failed merge")
+    api.close()
+
+
+def test_scene_rename():
+    """Merging a rename of the compared scene keeps the preview alive, before and after undo."""
+    print("scene rename")
+    renamed = os.path.join(TMP, "renamed", "shot.blend")
+    fixtures.build("current", renamed)
+    bpy.context.scene.name = "Shot"
+    bpy.ops.wm.save_as_mainfile(filepath=renamed)
+    bpy.ops.wm.open_mainfile(filepath=CUR)
+    api.start(renamed)
+    i = entry("SCENE", "Scene")
+    check(ses.S.entries[i].status == diff.RENAMED, "scene rename detected")
+    api.set_choice(i, "INCOMING")
+    api.merge()
+    check(bpy.context.scene.name == "Shot" and ses.S.scene == "Shot", "scene takes the incoming name")
+    check(preview.preview_scene() is not None and preview.original_scene() is not None, "preview follows the rename")
+    bpy.data.scenes["Shot", None].name = "Scene"  # what undoing the merge does
+    api.refresh(after_undo=True)
+    check(ses.S.scene == "Scene" and preview.preview_scene() is not None, "preview survives undoing the rename")
     api.close()
 
 
@@ -361,7 +383,7 @@ def main():
     fixtures.build_review("current", RCUR)
     bpy.ops.wm.open_mainfile(filepath=CUR)
     for t in (test_diff, test_preview_is_safe, test_views, test_merge, test_close, test_review,
-              test_failed_merge_rolls_back, test_operator_undo):
+              test_failed_merge_rolls_back, test_scene_rename, test_operator_undo):
         try:
             t()
         except Exception:

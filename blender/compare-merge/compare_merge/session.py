@@ -24,6 +24,7 @@ class State:
         self.path = ""  # absolute path of the incoming .blend
         self.lib_filepath = ""  # Library.filepath as Blender stores it (lookup key for linked IDs)
         self.scene = ""  # name of the scene being previewed
+        self.scene_names = set()  # every name it had during the comparison (a merged rename, then undo)
         self.entries = []  # [diff.Entry], same order as the sidebar rows
         self.incoming_snap = {}
         self.current_snap = {}
@@ -226,6 +227,7 @@ def compare(path, scene_name):
         close_library()
     S.path = path
     S.scene = scene_name
+    S.scene_names = {scene_name}
     if library() is not None:
         unlink()
     link(path, scenes=True)

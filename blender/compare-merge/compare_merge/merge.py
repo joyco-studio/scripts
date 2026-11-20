@@ -83,9 +83,10 @@ def apply(choices, scene_name):
     try:
         return run(job, path, names, bring, remove, scene_entries, chosen, member, inc_scenes, scene_name)
     except Exception:
-        job.rollback()
+        job.rollback()  # drop what was appended (rollback restores names too)
         raise
     finally:
+        job.restore_names()  # on every path: no temporary cm~ names can survive a merge
         LAST_TOUCHED = job.touched
 
 
@@ -275,7 +276,11 @@ def run(job, path, names, bring, remove, scene_entries, chosen, member, inc_scen
         sc.world = local_for("WORLD", st["world"]) if st["world"] else None
         preview.apply_scene_settings(sc, st)
         if e.status == diff.RENAMED:
+            was = sc.name
             sc.name = e.incoming
+            if was == S.scene:  # keep following the compared scene under its new name
+                S.scene = sc.name
+                S.scene_names.add(sc.name)
         job.touched = True
 
     # Leftovers of the append nobody uses (shape keys of dropped meshes, ...).

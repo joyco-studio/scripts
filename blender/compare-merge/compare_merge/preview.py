@@ -264,7 +264,14 @@ def preview_coll(sc, role):
 
 
 def original_scene():
-    return bpy.data.scenes.get((S.scene, None)) if S.scene else None
+    """The real scene being compared. Merging a scene rename changes its name and undo changes it
+    back, so every name it has had is tried; the one that exists becomes current again."""
+    for name in [S.scene] + sorted(S.scene_names - {S.scene}):
+        sc = bpy.data.scenes.get((name, None)) if name else None
+        if sc is not None and not sc.is_runtime_data:
+            S.scene = name
+            return sc
+    return None
 
 
 def ensure_scene():
