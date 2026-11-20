@@ -10,12 +10,16 @@ concurrency: ${{ github.workflow }}-${{ github.ref }}
 permissions:
   contents: write
   pull-requests: write
+  pages: write
   id-token: write
 
 jobs:
   release:
     name: Release
     runs-on: ubuntu-latest
+    outputs:
+      published: ${{ steps.changesets.outputs.published }}
+      publishedPackages: ${{ steps.changesets.outputs.publishedPackages }}
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v4
@@ -41,9 +45,12 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Attach Blender add-on builds to their releases
-        if: steps.changesets.outputs.published == 'true'
-        run: node scripts/blender-addons.mjs release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PUBLISHED: ${{ steps.changesets.outputs.publishedPackages }}
+  # Builds the Blender add-ons Changesets just tagged with Blender, attaches them to their releases and
+  # updates the extensions repository on GitHub Pages. Skips itself when no add-on was released.
+  blender:
+    name: Publish Blender add-ons
+    needs: release
+    if: needs.release.outputs.published == 'true'
+    uses: ./.github/workflows/publish-extension.yml
+    with:
+      published: ${{ needs.release.outputs.publishedPackages }}

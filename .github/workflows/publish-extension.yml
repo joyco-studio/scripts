@@ -1,0 +1,153 @@
+name: Publish Blender extensions
+
+# Builds the Blender add-ons named by one or more `<name>@<version>` tags with the official
+# `blender --command extension build`, attaches them to their GitHub releases and publishes the
+# extensions to the repository Blender reads from GitHub Pages:
+#   https://joyco-studio.github.io/scripts/index.json
+#
+# Release.yml calls it after Changesets tags a release (a release made with GITHUB_TOKEN never fires
+# `release: published`). `release: published` covers releases made by hand, and workflow_dispatch
+# republishes any tags, e.g. `compare-merge@0.2.0 texel-coverage@0.3.0` to fill the repository the first time.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tags:
+        description: "Space-separated release tags, e.g. texel-coverage@0.3.0"
+        required: true
+        type: string
+  workflow_call:
+    inputs:
+      tags:
+        description: "Space-separated release tags"
+        required: false
+        type: string
+        default: ""
+      published:
+        description: "Changesets publishedPackages JSON"
+        required: false
+        type: string
+        default: "[]"
+
+permissions:
+  contents: write
+  pages: write # request a Pages build after pushing gh-pages
+
+env:
+  BLENDER_SERIES: "5.2"
+  BLENDER_VERSION: "5.2.4"
+
+jobs:
+  publish:
+    name: Build and publish
+    runs-on: ubuntu-latest
+    # No concurrency group: GitHub keeps only one pending run per group and would drop releases queued
+    # behind it. Runs can overlap instead; the gh-pages push below retries on top of whatever landed first.
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          # For a release event GITHUB_REF is the tag; use the default branch's copy of the scripts
+          # and check the tag out separately below.
+          ref: ${{ github.event_name == 'release' && github.event.repository.default_branch || github.ref }}
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Cache Blender download
+        id: blender-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/blender.tar.xz
+          key: blender-${{ env.BLENDER_VERSION }}-linux-x64
+
+      - name: Download Blender ${{ env.BLENDER_VERSION }}
+        if: steps.blender-cache.outputs.cache-hit != 'true'
+        run: >
+          curl -fsSL --retry 3 -o ~/blender.tar.xz
+          "https://download.blender.org/release/Blender${BLENDER_SERIES}/blender-${BLENDER_VERSION}-linux-x64.tar.xz"
+
+      - name: Install Blender
+        run: |
+          # Shared libraries the Blender binary links against, even in background mode.
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            libx11-6 libxext6 libxrender1 libxfixes3 libxi6 libxkbcommon0 libsm6 libice6 libgl1 libvulkan1
+          mkdir -p ~/blender
+          tar -xJf ~/blender.tar.xz -C ~/blender --strip-components=1
+          echo "$HOME/blender" >> "$GITHUB_PATH"
+          echo "BLENDER=$HOME/blender/blender" >> "$GITHUB_ENV"
+          ~/blender/blender --version
+
+      - name: Validate, build and attach to the releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAGS: ${{ inputs.tags || github.event.release.tag_name }}
+          PUBLISHED: ${{ inputs.published || '[]' }}
+        run: |
+          set -euo pipefail
+          tags="$TAGS $(jq -r '.[] | "\(.name)@\(.version)"' <<< "$PUBLISHED" | tr '\n' ' ')"
+          : > "$RUNNER_TEMP/zips"
+          extensions=""
+          for tag in $tags; do
+            echo "::group::$tag"
+            wt="dist/release/$tag"
+            git worktree add --detach "$wt" "refs/tags/$tag"
+            # Fails if the tag, package.json and blender_manifest.toml disagree or validation fails.
+            ADDONS_ROOT="$wt" node scripts/blender-addons.mjs release "$tag"
+            zips="$(find "$wt/dist/blender" -maxdepth 1 -name '*.zip' 2>/dev/null || true)"
+            if [ -n "$zips" ]; then echo "$zips" >> "$RUNNER_TEMP/zips"; extensions="$extensions $tag"; fi
+            echo "::endgroup::"
+          done
+          echo "EXTENSIONS=${extensions# }" >> "$GITHUB_ENV"
+          echo "Extensions to publish:"; cat "$RUNNER_TEMP/zips"
+
+      - name: Update the extensions repository on gh-pages
+        run: |
+          set -euo pipefail
+          mapfile -t zips < "$RUNNER_TEMP/zips"
+          if [ ${#zips[@]} -eq 0 ]; then echo "No extensions to publish."; exit 0; fi
+          # Rebuilds the repository on top of the current gh-pages and pushes; if another run pushed
+          # first the push is rejected, so fetch again and redo it.
+          git worktree add --detach dist/pages
+          for attempt in 1 2 3 4 5; do
+            cd "$GITHUB_WORKSPACE/dist/pages"
+            # No local branch: start from the remote tip each attempt and push HEAD to it.
+            if git ls-remote --exit-code --heads origin gh-pages > /dev/null; then
+              git fetch -q origin gh-pages
+              git checkout -q -f --detach FETCH_HEAD
+              git clean -fdxq
+            else
+              git checkout -q -f --orphan "gh-pages-new-$attempt"
+              git rm -rfq --cached --ignore-unmatch .
+              git clean -fdxq
+            fi
+            cd "$GITHUB_WORKSPACE"
+            # Copies the zips, moves older versions to archive/ and regenerates index.json + index.html.
+            node scripts/blender-addons.mjs pages dist/pages "${zips[@]}"
+            cd dist/pages
+            git add -A
+            if git diff --cached --quiet; then echo "Nothing changed."; exit 0; fi
+            git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -q -m "Publicar $EXTENSIONS"
+            if git push origin HEAD:refs/heads/gh-pages; then break; fi
+            [ "$attempt" = 5 ] && { echo "::error::Could not push gh-pages"; exit 1; }
+            echo "gh-pages moved, retrying ($attempt)"; sleep $((attempt * 5))
+          done
+          echo "### Published to https://${GITHUB_REPOSITORY_OWNER}.github.io/${GITHUB_REPOSITORY#*/}/index.json" >> "$GITHUB_STEP_SUMMARY"
+          jq -r '.data[] | "- \(.id) \(.version)"' index.json >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Deploy GitHub Pages
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # A push made with GITHUB_TOKEN may not start a Pages build on its own, so ask for one.
+          [ -s "$RUNNER_TEMP/zips" ] || exit 0
+          if ! gh api -X POST "repos/$GITHUB_REPOSITORY/pages/builds" --silent; then
+            echo "::warning::Could not request a Pages build. Enable Pages from the gh-pages branch (Settings > Pages)."
+          fi

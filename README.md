@@ -46,4 +46,6 @@ Custom plugins for exporting Blender data to web-friendly formats.
 - **`compare-merge`** — Diff two versions of a .blend, preview old/new versions safely and merge picked changes
 - **`texel-coverage`** — Size textures, UVs and culling from the cameras that see them
 
+Get updates inside Blender 4.2+ by adding the extensions repository `https://joyco-studio.github.io/scripts/index.json` ([how](./blender/#install-and-get-updates)).
+
 → [View documentation](./blender/)

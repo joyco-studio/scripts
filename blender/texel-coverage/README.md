@@ -6,7 +6,9 @@ Full guide with screenshots: [Texel Coverage in Notion](https://app.notion.com/p
 
 ## Install
 
-Download `texel_coverage-<version>.zip` from the latest `texel-coverage@…` [GitHub Release](https://github.com/joyco-studio/scripts/releases) and install it with Preferences > Get Extensions > ⌄ > Install from Disk (Blender 4.2+, tested on 5.1). The installed version shows in Preferences and in every CLI result and export report (`meta.version`).
+Install it from the JOYCO extensions repository so Blender tells you about new versions: add `https://joyco-studio.github.io/scripts/index.json` as a remote repository (see [Install and get updates](../README.md#install-and-get-updates)), then search for it in Preferences > Get Extensions (Blender 4.2+, tested on 5.1).
+
+Or download `texel_coverage-<version>.zip` from a `texel-coverage@…` [GitHub Release](https://github.com/joyco-studio/scripts/releases) and install it with Preferences > Get Extensions > ⌄ > Install from Disk (no update notifications). The installed version shows in Preferences and in every CLI result and export report (`meta.version`).
 
 For development, symlink the folder instead:
 
