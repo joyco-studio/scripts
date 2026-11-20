@@ -118,6 +118,32 @@ def test_preview_is_safe():
     View.active, View.focus = entry("MATERIAL", "Wood"), "GHOST"
     preview.rebuild()
     check(len(View.ghost_objects) >= 1, f"ghost for Wood users ({View.ghost_objects})")
+
+    def ghost_child(row):
+        View.active = row
+        preview.rebuild()
+        with bpy.context.temp_override(scene=sc, view_layer=vl):
+            bpy.context.evaluated_depsgraph_get().update()
+        return next((bpy.data.objects[n, None] for n in View.ghost_objects if n.startswith("Child")), None)
+
+    real_mpi = bpy.data.objects["Child", None].matrix_parent_inverse
+    # Its parent is another version of the Cube (the incoming one with the current Wood).
+    g = ghost_child(entry("MATERIAL", "Wood"))
+    check(g is not None and g.parent is not None and ses.is_draft(g.parent) and g.matrix_parent_inverse == real_mpi
+          and (g.matrix_world.translation - Vector((1, 3, 2))).length < 1e-5,
+          f"ghost Child keeps its offset under a ghost Cube ({g and tuple(g.matrix_world.translation)})")
+    # Unchanged itself, it hangs from the parent the main preview shows (here the current Cube).
+    cube_parts = ses.dependents(ses.S.entries[entry("OBJECT", "Cube")])  # mesh, Wood, action
+    for i in cube_parts:
+        View.choices[i] = "CURRENT"
+    g = ghost_child(entry("OBJECT", "Cube"))
+    check(g is not None and g.parent == cube and g.matrix_parent_inverse == real_mpi
+          and (g.matrix_world.translation - Vector((0, 3, 2))).length < 1e-5,
+          f"ghost Child keeps its offset under the current Cube ({g and tuple(g.matrix_world.translation)})")
+    for i in cube_parts:
+        View.choices[i] = "INCOMING"
+
+    View.active = entry("MATERIAL", "Wood")
     View.focus = "BLINK"
     preview.rebuild()
     preview.blink_tick()
