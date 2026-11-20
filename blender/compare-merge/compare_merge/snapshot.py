@@ -151,6 +151,23 @@ def custom_props(idb, out):
         out[f"custom › {k}"] = fmt(idb[k])
 
 
+def node_values(node):
+    """{label: socket} for the values a node holds itself: unlinked inputs (a repeated name gets
+    " 2", " 3"...) and the output of RGB / Value nodes, which keep their value there."""
+    out, seen = {}, {}
+    for sock in node.inputs:
+        if sock.is_linked or not hasattr(sock, "default_value") or not sock.enabled:
+            continue
+        label = sock.name
+        seen[label] = seen.get(label, 0) + 1
+        if seen[label] > 1:
+            label = f"{label} {seen[label]}"
+        out[label] = sock
+    if node.type in ("RGB", "VALUE"):
+        out["value"] = node.outputs[0]
+    return out
+
+
 def node_tree_fields(nt, out, prefix=""):
     if nt is None:
         return
@@ -160,17 +177,8 @@ def node_tree_fields(nt, out, prefix=""):
         if node.mute:
             out[f"{n} · muted"] = "on"
         rna_fields(node, f"{n} · ", out, depth=1, skip=NODE_SKIP)
-        seen = {}
-        for sock in node.inputs:
-            if sock.is_linked or not hasattr(sock, "default_value") or not sock.enabled:
-                continue
-            label = sock.name
-            seen[label] = seen.get(label, 0) + 1
-            if seen[label] > 1:
-                label = f"{label} {seen[label]}"
+        for label, sock in node_values(node).items():
             out[f"{n} › {label}"] = fmt(sock.default_value)
-        if node.type in ("RGB", "VALUE"):  # these keep their value on the output socket
-            out[f"{n} › value"] = fmt(node.outputs[0].default_value)
     for link in nt.links:
         if link.is_muted:
             continue
@@ -457,6 +465,83 @@ def snapshot(owned):
             except Exception as e:  # never let one odd data-block hide the rest of the diff
                 out[(cat, idb.name)] = {"error": f"could not read: {e}"}
     return out
+
+
+# ---------------------------------------------------------------------------------------------- merge units
+# A unit is the smallest group of fields that can be taken from the incoming file on its own and
+# still give a valid data-block (apply.units adds the locks). unit_key() is the grouping, next to
+# the snappers that name the fields. Keys are names, never indices, so picks survive a refresh.
+
+UNIT_CATS = {"OBJECT", "MESH", "MATERIAL", "WORLD", "LIGHT", "CAMERA"}
+OBJECT_UNITS = {
+    "location": "transform", "rotation": "transform", "rotation mode": "transform", "scale": "transform",
+    "delta location": "transform", "delta rotation": "transform", "delta scale": "transform",
+    "hide in renders": "visibility", "disabled in viewports": "visibility",
+    "parent": "parent", "parent type": "parent", "parent bone": "parent", "parent inverse": "parent",
+    "collections": "collections", "action": "animation", "action slot": "animation", "drivers": "drivers",
+    "pose": "pose", "instancing": "instancing", "instance collection": "instancing", "data": "data",
+    "type": "type", "vertex groups": "vertex groups",
+}
+UNIT_LABEL = {"transform": "Transform", "visibility": "Visibility", "parent": "Parent", "collections": "Collections",
+              "animation": "Animation", "drivers": "Drivers", "pose": "Pose", "instancing": "Instancing",
+              "data": "Data", "type": "Type", "vertex groups": "Vertex groups", "modifiers": "Modifier stack",
+              "constraints": "Constraint stack", "topology": "Topology", "positions": "Positions",
+              "materials": "Materials", "weights": "Vertex weights", "wiring": "Node wiring"}
+MESH_TOPOLOGY = {"vertices", "edges", "faces", "topology"}
+
+
+def unit_key(cat, field, nodes=()):
+    """(unit key, label) of a changed field. `nodes`: node names of a material / world (its fields
+    start with one). Fields nothing knows how to copy on their own get a "field:" unit (locked)."""
+    if field.startswith("custom › "):
+        k = field[len("custom › "):]
+        return f"custom:{k}", f"Custom property {k}"
+    if cat == "OBJECT":
+        if field in OBJECT_UNITS:
+            key = OBJECT_UNITS[field]
+            return key, UNIT_LABEL[key]
+        if field.startswith("material slot "):
+            n = field[len("material slot "):]
+            return f"slot:{n}", f"Material slot {n}"
+        for kind, prefix in (("modifier", "mod"), ("constraint", "con")):
+            if field.startswith(kind + " "):
+                rest = field[len(kind) + 1:]
+                if " · " in rest:
+                    name = rest.split(" · ", 1)[0]
+                    return f"{prefix}:{name}", f"{kind.title()} {name}"
+                if rest.isdigit():
+                    key = kind + "s"
+                    return key, UNIT_LABEL[key]
+    elif cat == "MESH":
+        if field in MESH_TOPOLOGY:
+            return "topology", UNIT_LABEL["topology"]
+        if field in ("positions", "materials"):
+            return field, UNIT_LABEL[field]
+        if field == "vertex weights":
+            return "weights", UNIT_LABEL["weights"]
+        if field.startswith("uv map "):
+            n = field[len("uv map "):]
+            return f"uv:{n}", f"UV map {n}"
+        if field.startswith("attribute ("):
+            n = field.split(") ", 1)[1]
+            return f"attr:{n}", f"Attribute {n}"
+        if field.startswith("shape key "):
+            n = field[len("shape key "):]
+            return f"key:{n}", f"Shape key {n}"
+    elif cat in ("MATERIAL", "WORLD"):
+        if field.startswith(("link ", "interface ")) or field.endswith(" · type"):
+            return "wiring", UNIT_LABEL["wiring"]
+        for sep in (" · ", " › "):
+            if sep in field and field.split(sep, 1)[0] in nodes:
+                return f"node:{field}", field
+        return f"rna:{field}", field
+    elif cat in ("LIGHT", "CAMERA"):
+        return f"rna:{field}", field
+    return f"field:{field}", field
+
+
+def node_names(fields):
+    return {f[:-len(" · type")] for f in fields if f.endswith(" · type")}
 
 
 # ---------------------------------------------------------------------------------------------- references

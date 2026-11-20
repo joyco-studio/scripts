@@ -213,3 +213,80 @@ def build_review(variant, path):
     bpy.context.view_layer.update()
     os.makedirs(os.path.dirname(path), exist_ok=True)
     bpy.ops.wm.save_as_mainfile(filepath=path)
+
+
+def build_units(variant, path):
+    """Field-level picks (run_tests.test_units): each data-block differs in two independent ways."""
+    inc = variant == "incoming"
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    sc = bpy.context.scene
+    link = sc.collection.objects.link
+
+    # Same topology: current moved the vertices, incoming changed the UVs and added an attribute.
+    split = bpy.data.meshes.new("SplitMesh")
+    bm = bmesh.new()
+    bm.loops.layers.uv.new("UVMap")
+    bmesh.ops.create_grid(bm, x_segments=3, y_segments=3, size=1.0, calc_uvs=True)
+    bm.to_mesh(split)
+    bm.free()
+    split_ob = bpy.data.objects.new("SplitObj", split)
+    link(split_ob)
+    if not inc:
+        for v in split.vertices:
+            v.co.z += 0.25 * v.index
+    else:
+        uv = split.uv_layers["UVMap"].data
+        for d in uv:
+            d.uv = (d.uv[0] * 0.5, d.uv[1] * 0.5 + 0.25)
+        w = split.attributes.new("Weight", "FLOAT", "POINT")
+        w.data.foreach_set("value", [0.1 * i for i in range(len(split.vertices))])
+    split_ob.shape_key_add(name="Basis", from_mix=False)
+    k1 = split_ob.shape_key_add(name="Key 1", from_mix=False)
+    k1.data[0].co.z += 1.0 if inc else 2.0
+
+    # Different topology: incoming is subdivided once more.
+    sub = bpy.data.meshes.new("SubdivMesh")
+    bm = bmesh.new()
+    bm.loops.layers.uv.new("UVMap")
+    bmesh.ops.create_grid(bm, x_segments=4 if inc else 2, y_segments=4 if inc else 2, size=1.0, calc_uvs=True)
+    bm.to_mesh(sub)
+    bm.free()
+    link(bpy.data.objects.new("SubdivObj", sub))
+
+    # An object that moved on one side and got another material in slot 1 on the other.
+    mat_a, mat_b = bpy.data.materials.new("MatA"), bpy.data.materials.new("MatB")
+    mat_b.use_fake_user = True
+    mover_me = cube_mesh("MoverMesh")
+    mover_me.materials.append(mat_a)
+    mover = bpy.data.objects.new("Mover", mover_me)
+    link(mover)
+    mover.location = (0, 0, 3) if inc else (0, 0, 0)
+    mover.material_slots[0].link = "OBJECT"
+    mover.material_slots[0].material = mat_b if inc else mat_a
+
+    # A material with two independent input changes.
+    painted = bpy.data.materials.new("Painted")
+    painted.use_fake_user = True
+    bsdf = next(n for n in painted.node_tree.nodes if n.type == "BSDF_PRINCIPLED")
+    bsdf.inputs["Roughness"].default_value = 0.9 if inc else 0.3
+    bsdf.inputs["Base Color"].default_value = (0, 0, 1, 1) if inc else (1, 0, 0, 1)
+
+    # A light with two property changes.
+    bulb = bpy.data.lights.new("Bulb", "POINT")
+    bulb.energy = 500.0 if inc else 100.0
+    bulb.color = (1, 0.5, 0.2) if inc else (1, 1, 1)
+    link(bpy.data.objects.new("BulbObj", bulb))
+
+    # Re-parented with an offset (Ctrl+P) on one side, moved on the other.
+    hook, hook2 = bpy.data.objects.new("Hook", None), bpy.data.objects.new("Hook2", None)
+    hook.location, hook2.location = (10, 0, 0), (0, 10, 0)
+    link(hook)
+    link(hook2)
+    hanger = bpy.data.objects.new("Hanger", None)
+    link(hanger)
+    hanger.parent = hook2 if inc else hook
+    hanger.matrix_parent_inverse = Matrix.Translation((0, 0, 5) if inc else (0, 0, 0))
+    hanger.location = (0, 0, 0) if inc else (1, 1, 1)
+
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    bpy.ops.wm.save_as_mainfile(filepath=path)

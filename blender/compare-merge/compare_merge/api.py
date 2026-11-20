@@ -3,7 +3,7 @@
 import bpy
 import numpy as np
 
-from . import diff, merge as merge_mod, preview, session as ses, snapshot
+from . import apply, diff, merge as merge_mod, preview, session as ses, snapshot
 from .preview import View
 from .session import S
 
@@ -34,14 +34,46 @@ def refresh(after_undo=False):
         # merge or the end of the comparison, so a Refresh in between doesn't lose them)
     ses.ensure_linked()
     ses.refresh_current()
-    View.choices = {i: keep[(e.cat, e.current, e.incoming)] for i, e in enumerate(S.entries)
-                    if (e.cat, e.current, e.incoming) in keep and ses.choosable(e)}
+    View.choices = {}
+    for i, e in enumerate(S.entries):
+        c = keep.get((e.cat, e.current, e.incoming))
+        if c is not None and ses.choosable(e):
+            View.choices[i] = apply.normalize(i, c)  # unit picks: only the units the new diff still has
     View.active = min(View.active, len(S.entries) - 1)
     preview.rebuild()
 
 
+def row_state(idx):
+    """CURRENT | INCOMING | MIXED."""
+    return ses.state(View.choices.get(idx))
+
+
+def takes(idx, unit_key):
+    """Does the row take this unit from the incoming file?"""
+    c = View.choices.get(idx)
+    if ses.state(c) == ses.INCOMING:
+        return any(u.key == unit_key for u in apply.units(idx))
+    return unit_key in ses.taken(c)
+
+
+def set_unit(idx, unit_key, choice):
+    """Take one unit of a changed row from the incoming file (INCOMING) or keep this file's (CURRENT).
+    The row becomes Mixed; it reads as Current / Incoming again when nothing / everything is taken.
+    Locked units only come with the whole row: they are left alone. No cascade."""
+    us = apply.units(idx)
+    unit = next((u for u in us if u.key == unit_key), None)
+    if unit is None or unit.locked:
+        return False
+    c = View.choices.get(idx)
+    keys = {u.key for u in us if not u.locked} if ses.state(c) == ses.INCOMING else set(ses.taken(c))
+    (keys.add if choice == ses.INCOMING else keys.discard)(unit_key)
+    View.choices[idx] = apply.normalize(idx, ses.mixed(keys))
+    return True
+
+
 def set_choice(idx, choice, cascade=True):
-    """Set a row; cascading also sets the changed data it is made of (mesh, materials, images...)."""
+    """Set a row (replacing its unit picks); cascading also sets the changed data it is made of
+    (mesh, materials, images...)."""
     touched = [idx]
     View.choices[idx] = choice
     e = S.entries[idx]

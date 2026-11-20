@@ -33,6 +33,7 @@ class State:
         self.incoming_scenes = {}  # scene name -> settings (linked scenes can't stay linked, see link())
         self.incoming_members = {}  # object name -> [(in a scene's top level, collection name)]
         self.incoming_colls = {}  # collection name -> parents and settings (to rebuild new nested collections)
+        self.units = {}  # entry index -> [apply.Unit] (derived on demand, dropped with the diff)
 
     @property
     def active(self):
@@ -45,6 +46,32 @@ S = State()
 def reset():
     """Clear the comparison in place: other modules hold this object (`from .session import S`)."""
     S.__init__()
+
+
+# ---------------------------------------------------------------------------------------------- picks
+# A row's pick is one value: "CURRENT" | "INCOMING" | ("MIXED", frozenset of unit keys taken from the
+# incoming file). Read it only through these, never by comparing with the strings.
+
+CURRENT, INCOMING, MIXED = "CURRENT", "INCOMING", "MIXED"
+
+
+def state(choice):
+    """CURRENT | INCOMING | MIXED."""
+    return MIXED if isinstance(choice, tuple) else (choice or CURRENT)
+
+
+def taken(choice):
+    """Unit keys a mixed pick takes from the incoming file (empty otherwise)."""
+    return choice[1] if isinstance(choice, tuple) else frozenset()
+
+
+def mixed(keys):
+    return (MIXED, frozenset(keys))
+
+
+def other_side(choice):
+    """The whole version Ghost / Blink / Flip compare a pick with (a mix is compared with this file)."""
+    return CURRENT if state(choice) != CURRENT else INCOMING
 
 
 # ---------------------------------------------------------------------------------------------- ID helpers
@@ -240,6 +267,7 @@ def refresh_current():
     """Re-read the current file (after edits or a merge) and diff again; the incoming side is cached."""
     S.current_snap = snapshot.snapshot(lambda i: is_current(i) and not is_draft(i))
     S.entries = diff.diff(S.current_snap, S.incoming_snap, snapshot.CAT_ORDER)
+    S.units = {}
     S.index_cur = {(e.cat, e.current): i for i, e in enumerate(S.entries) if e.current}
     S.index_inc = {(e.cat, e.incoming): i for i, e in enumerate(S.entries) if e.incoming}
 

@@ -8,7 +8,7 @@ from mathutils import Vector
 from bpy.props import BoolProperty, CollectionProperty, EnumProperty, FloatProperty, IntProperty, \
     PointerProperty, StringProperty
 
-from . import api, diff, merge, preview, snapshot
+from . import api, apply, diff, merge, preview, snapshot
 from . import session as ses
 from .preview import View
 from .session import S
@@ -77,7 +77,9 @@ def sync_rows(p=None):
             row.label = e.name
             row.n_changes = len(e.changes)
             row.choosable = ses.choosable(e)
-            c = View.choices.get(i, "CURRENT")
+            state = ses.state(View.choices.get(i))
+            row.mixed = state == ses.MIXED
+            c = ses.INCOMING if state == ses.INCOMING else ses.CURRENT  # a mix draws its own buttons
             if row.choice != c:
                 row.choice = c
         if p.active >= len(p.rows):
@@ -146,6 +148,7 @@ class CM_Row(bpy.types.PropertyGroup):
     label: StringProperty()
     n_changes: IntProperty()
     choosable: BoolProperty()
+    mixed: BoolProperty()  # some fields from each file (unit picks in Details)
     choice: EnumProperty(name="Version", items=choice_items, update=choice_update)
 
 
@@ -203,7 +206,12 @@ class CM_UL_rows(bpy.types.UIList):
         row.label(text="", icon=STATUS_ICON.get(item.status, "DOT"))
         row.label(text=item.label, icon=snapshot.CAT_ICON.get(item.cat, "DOT"))
         row = split.row(align=True)
-        if item.choosable:
+        if item.choosable and item.mixed:  # neither whole version: the icons take one, replacing the mix
+            row.operator(CM_OT_set_row.bl_idname, text="", icon="FILE_BLEND").index = item.index
+            row.operator(CM_OT_show_row.bl_idname, text="Mixed", depress=True).index = item.index
+            op = row.operator(CM_OT_set_row.bl_idname, text="", icon="IMPORT")
+            op.index, op.choice = item.index, ses.INCOMING
+        elif item.choosable:
             row.prop(item, "choice", expand=True)
         elif item.status == diff.SAME:
             row.label(text="identical")
@@ -381,8 +389,52 @@ class CM_OT_flip(bpy.types.Operator):
         return S.active and 0 <= p.active < len(p.rows) and p.rows[p.active].choosable
 
     def execute(self, context):
-        row = props(context).rows[props(context).active]
-        row.choice = "CURRENT" if row.choice == "INCOMING" else "INCOMING"
+        idx = props(context).active
+        api.set_choice(idx, ses.other_side(View.choices.get(idx)), cascade=True)
+        sync_rows()
+        rebuild(context)
+        return {"FINISHED"}
+
+
+class CM_OT_set_row(bpy.types.Operator):
+    bl_idname = "compare_merge.set_row"
+    bl_label = "Set Row"
+    bl_description = "Take this whole version of the row (replaces its field picks)"
+
+    index: IntProperty()
+    choice: EnumProperty(items=[("CURRENT", "Current", ""), ("INCOMING", "Incoming", "")])
+
+    @classmethod
+    def poll(cls, _context):
+        return S.active
+
+    def execute(self, context):
+        if not 0 <= self.index < len(S.entries):
+            return {"CANCELLED"}
+        api.set_choice(self.index, self.choice, cascade=True)
+        sync_rows()
+        rebuild(context)
+        return {"FINISHED"}
+
+
+class CM_OT_pick_unit(bpy.types.Operator):
+    bl_idname = "compare_merge.pick_unit"
+    bl_label = "Pick Field"
+    bl_description = "Take these fields from this version and keep the rest of the row as it is picked"
+
+    index: IntProperty()
+    unit: StringProperty()
+    choice: EnumProperty(items=[("CURRENT", "Current", ""), ("INCOMING", "Incoming", "")])
+
+    @classmethod
+    def poll(cls, _context):
+        return S.active
+
+    def execute(self, context):
+        if not 0 <= self.index < len(S.entries) or not api.set_unit(self.index, self.unit, self.choice):
+            return {"CANCELLED"}
+        sync_rows()
+        rebuild(context)
         return {"FINISHED"}
 
 
@@ -539,7 +591,7 @@ class CM_OT_merge(bpy.types.Operator):
 
     @classmethod
     def poll(cls, _context):
-        return S.active and any(c == "INCOMING" for c in View.choices.values())
+        return S.active and any(ses.state(c) != ses.CURRENT for c in View.choices.values())
 
     def invoke(self, context, event):
         g = merge_overview()
@@ -696,20 +748,65 @@ class CM_PT_details(CM_Panel, bpy.types.Panel):
                 layout.label(text="Also changed: " + ", ".join(S.entries[d].name for d in deps[:5]), icon="LINKED")
         if not e.changes:
             return
-        # Field on its own line, then current | incoming: readable in a narrow sidebar.
+        us = apply.units(p.active) if ses.choosable(e) else []
+        if e.cat == "MESH" and us and len(api.used_by(e)) > 1:
+            layout.label(text="Field picks change every object using this mesh", icon="INFO")
         col = layout.column(align=True)
         head = col.split(factor=0.5)
         head.label(text="Current", icon="FILE_BLEND")
         head.label(text="Incoming", icon="IMPORT")
-        for field, a, b in e.changes[:60]:
-            box = col.box()
-            sub = box.column(align=True)
+        if not us:
+            draw_fields(col, e.changes[:60])
+            if len(e.changes) > 60:
+                col.label(text=f"… {len(e.changes) - 60} more")
+            return
+        # Grouped by unit, each with its own Current | Incoming: some fields from each file.
+        for u in us[:40]:
+            draw_unit(col, p.active, u)
+        if len(us) > 40:
+            col.label(text=f"… {len(us) - 40} more")
+
+
+def draw_fields(col, changes):
+    """Field on its own line, then current | incoming: readable in a narrow sidebar."""
+    for field, a, b in changes:
+        box = col.box()
+        sub = box.column(align=True)
+        sub.label(text=field)
+        split = sub.split(factor=0.5)
+        split.label(text=a)
+        split.label(text=b)
+
+
+UNIT_FOLD = 6  # units with more fields than this fold their field rows away
+
+
+def draw_unit(col, idx, u):
+    box = col.box()
+    head = box.split(factor=0.5)  # lined up with the Current | Incoming columns below
+    head.label(text=u.label, icon="LOCKED" if u.locked else "NONE")
+    picks = head.row(align=True)
+    picks.enabled = not u.locked
+    took = api.takes(idx, u.key)
+    for choice, text in ((ses.CURRENT, "Current"), (ses.INCOMING, "Incoming")):
+        op = picks.operator(CM_OT_pick_unit.bl_idname, text=text, depress=took == (choice == ses.INCOMING))
+        op.index, op.unit, op.choice = idx, u.key, choice
+    if u.locked:
+        box.label(text=u.locked)
+    fields = [(f if len(u.fields) > 1 else "", a, b) for f, a, b in u.fields]  # one field: the header names it
+    if len(fields) > UNIT_FOLD:
+        header, body = box.panel(f"cm_unit_{u.key}", default_closed=True)
+        header.label(text=f"{len(fields)} fields")
+        if body is None:
+            return
+        box = body
+    for field, a, b in fields:
+        sub = box.column(align=True)
+        if field:
             sub.label(text=field)
-            split = sub.split(factor=0.5)
-            split.label(text=a)
-            split.label(text=b)
-        if len(e.changes) > 60:
-            col.label(text=f"… {len(e.changes) - 60} more")
+        split = sub.split(factor=0.5)
+        split.label(text=a)
+        split.label(text=b)
 
 
 class CM_PT_merge(CM_Panel, bpy.types.Panel):
@@ -724,8 +821,9 @@ class CM_PT_merge(CM_Panel, bpy.types.Panel):
         layout = self.layout
         groups = merge_overview()
         upd = len(groups[diff.CHANGED]) + len(groups[diff.RENAMED])
-        layout.label(text=f"{upd} to update · {len(groups[diff.ONLY_INCOMING])} to add · "
-                          f"{len(groups[diff.ONLY_CURRENT])} to remove")
+        part = sum(1 for i in groups[diff.CHANGED] if ses.state(View.choices.get(i)) == ses.MIXED)
+        layout.label(text=f"{upd} to update{f' ({part} partly)' if part else ''} · "
+                          f"{len(groups[diff.ONLY_INCOMING])} to add · {len(groups[diff.ONLY_CURRENT])} to remove")
         if not upd and not groups[diff.ONLY_INCOMING] and not groups[diff.ONLY_CURRENT]:
             layout.label(text="Set rows to Incoming / Add / Remove to merge them", icon="INFO")
         for status, title in MERGE_GROUPS:
@@ -748,7 +846,7 @@ def merge_overview():
     """Rows Merge will act on, by kind of change: {status: [entry index]} (list order: type, then name)."""
     groups = {status: [] for status, _t in MERGE_GROUPS}
     for i in sorted(View.choices):
-        if View.choices[i] == "INCOMING" and i < len(S.entries) and ses.choosable(S.entries[i]):
+        if ses.state(View.choices[i]) != ses.CURRENT and i < len(S.entries) and ses.choosable(S.entries[i]):
             groups[S.entries[i].status].append(i)
     return groups
 
@@ -758,10 +856,20 @@ def plural(cat, n):
     return f"{n} {label}" if n == 1 else f"{n} {label}{'es' if label.endswith('h') else 's'}"
 
 
-def change_summary(e, n=3):
-    """What differs in a changed row, by top-level field: "location, custom, Principled BSDF +2"."""
+def change_summary(e, n=3, idx=None):
+    """What differs in a changed row, by top-level field: "location, custom, Principled BSDF +2".
+    For a mixed row, what comes from where: "UV map UVMap ← incoming · Positions kept"."""
     if e.status != diff.CHANGED:
         return ""
+    choice = View.choices.get(idx) if idx is not None else None
+    if ses.state(choice) == ses.MIXED:
+        us = apply.units(idx)
+        took = [u.label for u in us if u.key in ses.taken(choice)]
+        kept = [u.label for u in us if u.key not in ses.taken(choice)]
+
+        def some(labels):
+            return ", ".join(labels[:2]) + (f" +{len(labels) - 2}" if len(labels) > 2 else "")
+        return f"{some(took)} ← incoming · {some(kept)} kept"
     fields = list(dict.fromkeys("bones" if f.startswith("bone ") else f.split(" › ")[0] for f, _a, _b in e.changes))
     return ", ".join(fields[:n]) + (f" +{len(fields) - n}" if len(fields) > n else "")
 
@@ -783,7 +891,7 @@ def draw_merge_group(layout, status, title, rows):
         name.alignment = "LEFT"  # buttons without emboss center their text
         name.operator(CM_OT_show_row.bl_idname, text=e.name, icon=snapshot.CAT_ICON.get(e.cat, "DOT"),
                       emboss=False).index = i
-        split.label(text=change_summary(e))
+        split.label(text=change_summary(e, idx=i))
     if len(rows) > OVERVIEW_ROWS:
         col.label(text=f"… {len(rows) - OVERVIEW_ROWS} more in the list above")
 
@@ -812,5 +920,5 @@ def prefs():
 
 
 classes = (CM_Row, CM_Props, CM_UL_rows, CM_OT_open_workspace, CM_OT_compare, CM_OT_refresh, CM_OT_close,
-           CM_OT_set_all, CM_OT_flip, CM_OT_show_row, CM_OT_frame, CM_OT_merge, CM_PT_compare, CM_PT_preview,
+           CM_OT_set_all, CM_OT_flip, CM_OT_set_row, CM_OT_pick_unit, CM_OT_show_row, CM_OT_frame, CM_OT_merge, CM_PT_compare, CM_PT_preview,
            CM_PT_changes, CM_PT_details, CM_PT_merge, CM_Preferences)

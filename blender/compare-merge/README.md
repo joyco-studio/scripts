@@ -30,12 +30,22 @@ ln -s "$PWD/compare_merge" ~/Library/Application\ Support/Blender/5.3/extensions
 
    Click a row (or an object in the viewport) to see the changed fields side by side. Clicking a row also selects what it affects and reveals it in the Outliner. Meshes also show how many vertices moved and by how much. Above the list, filter by type, by name (search field) and by kind of change (one toggle each for changed, renamed, new, missing and identical, with counts; identical is off by default). **All Current / All Incoming** apply only to the rows listed.
 3. Pick versions. The viewport always shows the **Merge Result**: what the file will look like with your picks. Picking Incoming on an object also picks its changed mesh, materials, images and animation; a new object brings its new children and the new objects it needs (parent, modifier targets), and a scene brings its new camera and world. Set any of them back by hand: a new object set to Skip stays out even if something else uses it.
-4. Look at the selected row's other version:
+4. Or take only some fields of a changed row: the **Details** panel groups its changed fields into units, each with its own **Current / Incoming**. Take their UV map and keep your vertex positions, their location and keep your material slot, their roughness and keep your base color. The row then shows **Mixed**; pressing its Current or Incoming icon takes the whole version again. A unit is the smallest set of fields that still gives a valid data-block:
+
+   | Type | Units |
+   |---|---|
+   | Object | transform, visibility, parent (with its offset), collections, each material slot, each modifier's / constraint's settings, animation, pose, instancing, data, each custom property |
+   | Mesh | positions (with the Basis shape key), each UV map, each attribute, each shape key, materials, each custom property |
+   | Material, World | each setting, each node input or node setting, each custom property |
+   | Light, Camera | each setting, each custom property |
+
+   Mesh units are on the mesh row, so they change every object using that mesh (the panel says so when there are several). Some units only come with the whole row and are shown locked, with the reason (see Limits). Picking every unit is the same as Incoming.
+5. Look at the selected row's other version:
    - **Show: Current / Incoming** flips the whole scene between the two files.
-   - **Ghost** overlays the other version as a wireframe.
+   - **Ghost** overlays the other version as a wireframe (for a Mixed row: this file's version).
    - **Blink** alternates between the two versions (rate adjustable).
    - **Solo** hides everything the row doesn't affect and frames it (each row you pick while Solo is on is framed too, like View Selected). Switching Show or the row's version keeps the view still so you see the change in place, and only re-frames when the version now shown is out of view; **Frame** zooms to it; **Flip** switches the row.
-5. Check the **Merge** panel: everything the merge will do, grouped into Update, Rename, Add and Remove, with a count per type and what changed on each row (click one to select it in the list). Then **Merge into This File**. Ctrl+Z undoes the whole merge and brings your picks back.
+6. Check the **Merge** panel: everything the merge will do, grouped into Update, Rename, Add and Remove, with a count per type and what changed on each row, or for a Mixed row what comes from where (click one to select it in the list). Then **Merge into This File**. Ctrl+Z undoes the whole merge and brings your picks back.
 
 ## The preview never touches the file
 
@@ -46,6 +56,7 @@ Blender doesn't record when anything changed, so the tool can't tell which versi
 - Saving (Ctrl+S, autosave, Save As) mid-preview writes only your real data; windows are pointed back at the real scene for the save. Closing Blender or opening another file just drops the preview. Linked scenes are the one thing Blender would still write, so the incoming scenes are read once and unlinked.
 - Leaving the tab shows the real scene again. Edits you make there are picked up when you come back.
 - Only **Merge** changes data. It appends the picked data-blocks, swaps them in everywhere the current ones were used (`user_remap`), drops duplicates of anything you kept, restores names and collection membership and cleans up leftovers. No `.001` copies are left behind.
+- A Mixed row is previewed as a runtime copy of your data-block with the picked units copied in, by the same functions Merge uses (`apply.py`). Merge copies them onto your data-block itself, which keeps its name and every user.
 
 ## Command line (people, agents, CI)
 
@@ -60,6 +71,8 @@ Exit code: 0 identical, 1 error, 2 the files differ (like `git diff --exit-code`
 ## Limits
 
 - Two-way diff: without a common ancestor the tool can't tell which side changed something, only that it differs. A three-way mode (pick a base file, auto-take one-sided changes, flag conflicts) is the natural next step.
+- Field picks need the same structure on both sides. Whole row only: a mesh whose topology differs (vertex, edge or face count, or vertex order: UVs and positions only fit their own geometry), vertex weights and vertex groups, a material or world whose node wiring changed (links, sockets, nodes added or removed), an object whose modifier or constraint stack changed (added, removed, reordered or retyped; their other units stay pickable), drivers, list values (color ramps…) and object type changes. Images, actions, node groups, armatures, curves, collections and scene settings are always whole rows.
+- Node inputs and settings are picked one by one rather than per node: with the wiring unchanged, any combination is a valid tree.
 - Entities are matched by name; renames are detected only when the content is identical.
 - Data linked into either file from other libraries is not compared.
 - The preview swaps picked images and node groups inside materials and Geometry Nodes modifiers, but not images or groups nested inside other node groups.
@@ -74,7 +87,8 @@ Exit code: 0 identical, 1 error, 2 the files differ (like `git diff --exit-code`
 | `session.py` | linking the incoming file as runtime data, lookups, what can be picked |
 | `preview.py` | the runtime preview scene, derived from the picks; Ghost / Blink / Solo |
 | `merge.py` | append, reconcile, restore names and membership |
+| `apply.py` | field-level picks: units (and why some are locked) and one copy function per unit, shared by preview and merge |
 | `api.py` | one function per action, shared by the sidebar, the CLI and the tests |
 | `ui.py` | workspace tab, panels, list, operators |
 | `blend-diff`, `blend_diff.py` | command line |
-| `tests/run` | headless tests (diff, preview isolation, save mid-preview, merge, reopen) |
+| `tests/run` | headless tests (diff, preview isolation, save mid-preview, merge, field picks, reopen) |
