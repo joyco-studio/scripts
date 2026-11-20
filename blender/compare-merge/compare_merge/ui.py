@@ -3,6 +3,8 @@
 import os
 
 import bpy
+from bpy_extras.view3d_utils import location_3d_to_region_2d
+from mathutils import Vector
 from bpy.props import BoolProperty, CollectionProperty, EnumProperty, FloatProperty, IntProperty, \
     PointerProperty, StringProperty
 
@@ -35,7 +37,12 @@ CHOICES = {
 CHOICES[diff.RENAMED] = CHOICES[diff.CHANGED]
 CHOICES[diff.SAME] = CHOICES[diff.CHANGED]
 
+# Kind-of-change filter: status -> its toggle on CM_Props. Identical rows start hidden.
+STATUS_FILTER = {diff.CHANGED: "show_changed", diff.RENAMED: "show_renamed", diff.ONLY_INCOMING: "show_added",
+                 diff.ONLY_CURRENT: "show_removed", diff.SAME: "show_same"}
+
 _syncing = False
+_from_viewport = False  # the row is being set from an object clicked in the viewport / outliner
 
 
 def props(context=None):
@@ -82,28 +89,53 @@ def choice_items(self, _context):
     return CHOICES.get(self.status, CHOICES[diff.CHANGED])
 
 
-def choice_update(self, _context):
+def choice_update(self, context):
     if _syncing or not S.active:
         return
     api.set_choice(self.index, self.choice, cascade=True)
     sync_rows()
-    preview.rebuild()
+    rebuild(context)
 
 
-def view_update(self, _context):
+def view_update(self, context):
     if _syncing:
         return
+    solo_on = self.solo and not View.solo
     View.mode, View.focus, View.solo, View.active = self.view, self.focus, self.solo, self.active
     if S.active:
-        preview.rebuild()
+        rebuild(context, frame=solo_on)  # Solo just went on: only the row is left, bring it into view
 
 
-def active_update(self, _context):
+def rebuild(context, frame=False):
+    """Rebuild the preview and keep the selected row selected (rebuilding replaces preview objects).
+    With Solo, the view stays put so a switch of version shows the change in place, unless the
+    version now shown is out of view (or `frame`), then it is framed."""
+    preview.rebuild()
+    obs = reselect(context)
+    if View.solo:
+        frame_in_views(context, obs, only_if_out_of_view=not frame)
+
+
+def active_update(self, context):
     if _syncing:
         return
     View.active = self.active
     if S.active and (View.focus != "OFF" or View.solo):
         preview.rebuild()
+    if S.active and not _from_viewport:
+        obs = select_row(context, self.active)
+        if View.solo:  # Solo leaves only this row on screen: don't look at empty space
+            frame_in_views(context, obs)
+
+
+def set_active_from_viewport(p, idx):
+    """Select the row of an object the user clicked, without re-selecting the row's objects."""
+    global _from_viewport
+    _from_viewport = True
+    try:
+        p.active = idx
+    finally:
+        _from_viewport = False
 
 
 class CM_Row(bpy.types.PropertyGroup):
@@ -132,21 +164,33 @@ class CM_Props(bpy.types.PropertyGroup):
                ("GHOST", "Ghost", "Overlay the other version of the selected row as a wireframe"),
                ("BLINK", "Blink", "Alternate between the two versions of the selected row")])
     solo: BoolProperty(name="Solo", update=view_update,
-                       description="Hide everything the selected row doesn't affect")
+                       description="Hide everything the selected row doesn't affect and frame it in the 3D view")
     blink_rate: FloatProperty(name="Blink Rate", default=0.6, min=0.15, max=3.0, subtype="TIME_ABSOLUTE",
                               unit="TIME_ABSOLUTE", description="Seconds each version stays on screen")
-    show_same: BoolProperty(name="Show Identical", description="Also list data-blocks that are the same in both files")
+    show_changed: BoolProperty(name="Changed", default=True, description="List rows that differ in the two files")
+    show_renamed: BoolProperty(name="Renamed", default=True,
+                               description="List rows with the same content under a different name")
+    show_added: BoolProperty(name="New", default=True, description="List rows only in the incoming file")
+    show_removed: BoolProperty(name="Missing", default=True, description="List rows only in this file")
+    show_same: BoolProperty(name="Identical", description="List rows that are the same in both files")
     category: EnumProperty(
         name="Type", items=[("ALL", "All Types", "", "NONE", 0)] +
         [(c, f"{label}s" if not label.endswith("h") else f"{label}es", "", icon, i + 1)
          for i, (c, _a, label, icon) in enumerate(snapshot.CATEGORIES)])
+    search: StringProperty(name="Search", options={"TEXTEDIT_UPDATE"},
+                           description="Only list rows whose name contains this text")
     message: StringProperty()
 
 
-def row_visible(p, row):
-    if not p.show_same and row.status == diff.SAME:
+def row_matches(p, row):
+    """Type and search filters (everything but the kind-of-change toggles)."""
+    if p.search and p.search.lower() not in row.label.lower():
         return False
     return p.category == "ALL" or row.cat == p.category
+
+
+def row_visible(p, row):
+    return getattr(p, STATUS_FILTER[row.status]) and row_matches(p, row)
 
 
 # ---------------------------------------------------------------------------------------------- list
@@ -280,6 +324,7 @@ class CM_OT_refresh(bpy.types.Operator):
     def execute(self, context):
         api.refresh()
         sync_rows()
+        reselect(context)
         return {"FINISHED"}
 
 
@@ -315,7 +360,7 @@ class CM_OT_set_all(bpy.types.Operator):
             if row.choosable and row_visible(p, row):
                 View.choices[row.index] = self.choice
         sync_rows(p)
-        preview.rebuild()
+        rebuild(context)
         return {"FINISHED"}
 
 
@@ -345,9 +390,95 @@ def row_objects(context, idx):
     vl = sc.view_layers[0]
     out = []
     for ob in sc.objects:
-        if ob.get("cm_src", ob.name) in names and ob.visible_get(view_layer=vl):
+        if ob.get("cm_src", ob.name) in names and ob.visible_get(view_layer=vl) and not ob.hide_select:
             out.append(ob)
     return out
+
+
+def reselect(context):
+    """Select the active row again after the preview was rebuilt (that replaces preview objects)."""
+    return select_row(context, props(context).active)
+
+
+def select_row(context, idx):
+    """Select what the row affects in the preview and reveal it in the Outliner. Returns the objects."""
+    sc = preview.preview_scene()
+    obs = row_objects(context, idx)
+    if sc is None:
+        return obs
+    vl = sc.view_layers[0]
+    for ob in vl.objects:
+        if ob.select_get(view_layer=vl):
+            ob.select_set(False, view_layer=vl)
+    if not obs:  # nothing of this row on screen (e.g. a new object set to Skip): select nothing
+        vl.objects.active = None
+        View.row_pick = None
+        return obs
+    for ob in obs:
+        try:
+            ob.select_set(True, view_layer=vl)
+        except RuntimeError:
+            pass
+    vl.objects.active = obs[0]
+    View.row_pick = obs[0].name_full  # so the viewport sync doesn't jump to the object's own row
+    for win in context.window_manager.windows:
+        if win.scene != sc:
+            continue
+        for area in win.screen.areas:
+            region = next((r for r in area.regions if r.type == "WINDOW"), None) if area.type == "OUTLINER" else None
+            if region is None:
+                continue
+            try:
+                with context.temp_override(window=win, area=area, region=region):
+                    bpy.ops.outliner.show_active()
+            except (RuntimeError, TypeError):
+                pass
+            area.tag_redraw()
+    return obs
+
+
+def frame_selected(context, window, area):
+    """View Selected in one 3D view (its usual smooth transition)."""
+    region = next((r for r in area.regions if r.type == "WINDOW"), None)
+    if region is None:
+        return
+    try:
+        with context.temp_override(window=window, area=area, region=region):
+            bpy.ops.view3d.view_selected()
+    except RuntimeError:
+        pass
+
+
+def centers(context, obs):
+    """World-space center of each object's evaluated bounding box."""
+    dg = context.evaluated_depsgraph_get()
+    out = []
+    for ob in obs:
+        ev = ob.evaluated_get(dg)
+        out.append(sum((ev.matrix_world @ Vector(c) for c in ev.bound_box), Vector()) / 8)
+    return out
+
+
+def in_view(area, point):
+    region = next((r for r in area.regions if r.type == "WINDOW"), None)
+    p2 = region and location_3d_to_region_2d(region, area.spaces.active.region_3d, point)
+    return p2 is not None and 0 <= p2.x <= region.width and 0 <= p2.y <= region.height
+
+
+def frame_in_views(context, obs, only_if_out_of_view=False):
+    """Frame the selection in every 3D view showing the preview (camera views are left alone)."""
+    sc = preview.preview_scene()
+    if not obs or sc is None:
+        return
+    pts = centers(context, obs) if only_if_out_of_view else None
+    for win in context.window_manager.windows:
+        if win.scene != sc:
+            continue
+        for area in win.screen.areas:
+            if area.type != "VIEW_3D" or area.spaces.active.region_3d.view_perspective == "CAMERA":
+                continue
+            if pts is None or not any(in_view(area, c) for c in pts):  # frame only if none is in view
+                frame_selected(context, win, area)
 
 
 class CM_OT_frame(bpy.types.Operator):
@@ -360,23 +491,10 @@ class CM_OT_frame(bpy.types.Operator):
         return S.active and context.area is not None and context.area.type == "VIEW_3D"
 
     def execute(self, context):
-        obs = row_objects(context, props(context).active)
-        if not obs:
+        if not select_row(context, props(context).active):
             self.report({"INFO"}, "Nothing visible to frame for this row")
             return {"CANCELLED"}
-        vl = context.view_layer
-        for ob in vl.objects:
-            if ob.select_get():
-                ob.select_set(False)
-        for ob in obs:
-            try:
-                ob.select_set(True)
-            except RuntimeError:
-                pass
-        vl.objects.active = obs[0]
-        region = next((r for r in context.area.regions if r.type == "WINDOW"), None)
-        with context.temp_override(region=region):
-            bpy.ops.view3d.view_selected()
+        frame_selected(context, context.window, context.area)
         return {"FINISHED"}
 
 
@@ -499,7 +617,15 @@ class CM_PT_changes(CM_Panel, bpy.types.Panel):
         layout = self.layout
         row = layout.row(align=True)
         row.prop(p, "category", text="")
-        row.prop(p, "show_same", text="", icon="CHECKMARK")
+        row.prop(p, "search", text="", icon="VIEWZOOM")
+        # One toggle per kind of change, with how many rows of that kind the type / search leave.
+        counts = dict.fromkeys(STATUS_FILTER, 0)
+        for r in p.rows:
+            if r.status in counts and row_matches(p, r):
+                counts[r.status] += 1
+        row = layout.row(align=True)
+        for status, prop in STATUS_FILTER.items():
+            row.prop(p, prop, text=str(counts[status]), icon=STATUS_ICON[status], toggle=True)
         layout.template_list("CM_UL_rows", "", p, "rows", p, "active", rows=12)
         row = layout.row(align=True)
         row.label(text="Listed rows:")

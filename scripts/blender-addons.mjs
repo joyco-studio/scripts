@@ -93,6 +93,9 @@ function build(names = []) {
   return out;
 }
 
+const INSTALL_START = "<!-- blender-install -->";
+const INSTALL_END = "<!-- /blender-install -->";
+
 function release() {
   const published = JSON.parse(process.env.PUBLISHED || "[]");
   const ours = new Set(addons().map((a) => a.name));
@@ -101,10 +104,32 @@ function release() {
   for (const a of build(names)) {
     const tag = `${a.name}@${a.version}`;
     const gh = (...args) => execFileSync("gh", args, { cwd: ROOT, stdio: "inherit" });
+    const asset = path.basename(a.file);
+    // GitHub always adds "Source code (zip)" to a release; say which file to install so nobody grabs that.
+    // The section sits between markers so re-running replaces it and keeps the Changesets changelog.
+    const install = [
+      INSTALL_START,
+      `**Install \`${asset}\`** from the assets below, not "Source code (zip)" (that's the whole repo).`,
+      a.type === "extension"
+        ? "In Blender: Edit > Preferences > Get Extensions > ⌄ > Install from Disk…, or drag the zip into Blender."
+        : "In Blender: Edit > Preferences > Add-ons > ⌄ > Install from Disk…",
+      INSTALL_END,
+    ].join("\n");
+    let body = null;
     try {
-      execFileSync("gh", ["release", "view", tag], { cwd: ROOT, stdio: "ignore" });
-    } catch {
-      gh("release", "create", tag, "--title", tag, "--notes", `Blender add-on ${tag}`);
+      body = execFileSync("gh", ["release", "view", tag, "--json", "body", "--jq", ".body"], {
+        cwd: ROOT,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+    } catch {}
+    if (body === null) {
+      gh("release", "create", tag, "--title", tag, "--notes", `Blender add-on ${tag}.\n\n${install}`);
+    } else {
+      const start = body.indexOf(INSTALL_START);
+      const end = body.indexOf(INSTALL_END);
+      const rest = (start >= 0 && end > start ? body.slice(0, start) + body.slice(end + INSTALL_END.length) : body).trim();
+      gh("release", "edit", tag, "--notes", rest ? `${install}\n\n${rest}` : install);
     }
     gh("release", "upload", tag, a.file, "--clobber");
   }

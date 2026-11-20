@@ -26,13 +26,13 @@ ln -s "$PWD/compare_merge" ~/Library/Application\ Support/Blender/5.3/extensions
    | + | only in the incoming file | Skip / Add |
    | − | only in this file | Keep / Remove |
 
-   Click a row (or an object in the viewport) to see the changed fields side by side. Meshes also show how many vertices moved and by how much.
+   Click a row (or an object in the viewport) to see the changed fields side by side. Clicking a row also selects what it affects and reveals it in the Outliner. Meshes also show how many vertices moved and by how much. Above the list, filter by type, by name (search field) and by kind of change (one toggle each for changed, renamed, new, missing and identical, with counts; identical is off by default). **All Current / All Incoming** apply only to the rows listed.
 3. Pick versions. The viewport always shows the **Merge Result**: what the file will look like with your picks. Picking Incoming on an object also picks its changed mesh, materials, images and animation; a new object brings its new children and the new objects it needs (parent, modifier targets), and a scene brings its new camera and world. Set any of them back by hand: a new object set to Skip stays out even if something else uses it.
 4. Look at the selected row's other version:
    - **Show: Current / Incoming** flips the whole scene between the two files.
    - **Ghost** overlays the other version as a wireframe.
    - **Blink** alternates between the two versions (rate adjustable).
-   - **Solo** hides everything the row doesn't affect; **Frame** zooms to it; **Flip** switches the row.
+   - **Solo** hides everything the row doesn't affect and frames it (each row you pick while Solo is on is framed too, like View Selected). Switching Show or the row's version keeps the view still so you see the change in place, and only re-frames when the version now shown is out of view; **Frame** zooms to it; **Flip** switches the row.
 5. **Merge into This File**. Ctrl+Z undoes the whole merge and brings your picks back.
 
 ## The preview never touches the file
