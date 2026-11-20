@@ -73,6 +73,7 @@ def _after_undo():
             for win in bpy.context.window_manager.windows:
                 if ui.is_cm_workspace(win.workspace):
                     preview.show_preview(win)
+            ui.reselect(bpy.context)
         except Exception as e:
             print("Compare & Merge: could not rebuild the preview after undo:", e)
     return None
@@ -130,14 +131,18 @@ def _tick():
         was = _last["workspace"].get(win.as_pointer())
         _last["workspace"][win.as_pointer()] = in_cm
         if in_cm:
+            refreshed = False
             if was is False and _stale["flag"]:
                 _stale["flag"] = False
                 try:
                     api.refresh()
                     ui.sync_rows()
+                    refreshed = True
                 except Exception as e:
                     print("Compare & Merge: refresh failed:", e)
             preview.show_preview(win)
+            if refreshed:
+                ui.reselect(bpy.context)
             ob = win.view_layer.objects.active if win.view_layer else None
             key = ob.name_full if ob else None
             if key == View.row_pick:

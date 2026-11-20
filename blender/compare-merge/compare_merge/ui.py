@@ -111,7 +111,7 @@ def rebuild(context, frame=False):
     With Solo, the view stays put so a switch of version shows the change in place, unless the
     version now shown is out of view (or `frame`), then it is framed."""
     preview.rebuild()
-    obs = select_row(context, props(context).active)
+    obs = reselect(context)
     if View.solo:
         frame_in_views(context, obs, only_if_out_of_view=not frame)
 
@@ -324,6 +324,7 @@ class CM_OT_refresh(bpy.types.Operator):
     def execute(self, context):
         api.refresh()
         sync_rows()
+        reselect(context)
         return {"FINISHED"}
 
 
@@ -394,16 +395,25 @@ def row_objects(context, idx):
     return out
 
 
+def reselect(context):
+    """Select the active row again after the preview was rebuilt (that replaces preview objects)."""
+    return select_row(context, props(context).active)
+
+
 def select_row(context, idx):
     """Select what the row affects in the preview and reveal it in the Outliner. Returns the objects."""
     sc = preview.preview_scene()
     obs = row_objects(context, idx)
-    if sc is None or not obs:
+    if sc is None:
         return obs
     vl = sc.view_layers[0]
     for ob in vl.objects:
         if ob.select_get(view_layer=vl):
             ob.select_set(False, view_layer=vl)
+    if not obs:  # nothing of this row on screen (e.g. a new object set to Skip): select nothing
+        vl.objects.active = None
+        View.row_pick = None
+        return obs
     for ob in obs:
         try:
             ob.select_set(True, view_layer=vl)
@@ -439,14 +449,14 @@ def frame_selected(context, window, area):
         pass
 
 
-def bounds_center(context, obs):
-    """World-space center of the objects' evaluated bounding boxes."""
+def centers(context, obs):
+    """World-space center of each object's evaluated bounding box."""
     dg = context.evaluated_depsgraph_get()
-    pts = []
+    out = []
     for ob in obs:
         ev = ob.evaluated_get(dg)
-        pts += [ev.matrix_world @ Vector(c) for c in ev.bound_box]
-    return sum(pts, Vector()) / len(pts)
+        out.append(sum((ev.matrix_world @ Vector(c) for c in ev.bound_box), Vector()) / 8)
+    return out
 
 
 def in_view(area, point):
@@ -460,14 +470,14 @@ def frame_in_views(context, obs, only_if_out_of_view=False):
     sc = preview.preview_scene()
     if not obs or sc is None:
         return
-    center = bounds_center(context, obs) if only_if_out_of_view else None
+    pts = centers(context, obs) if only_if_out_of_view else None
     for win in context.window_manager.windows:
         if win.scene != sc:
             continue
         for area in win.screen.areas:
             if area.type != "VIEW_3D" or area.spaces.active.region_3d.view_perspective == "CAMERA":
                 continue
-            if center is None or not in_view(area, center):
+            if pts is None or not any(in_view(area, c) for c in pts):  # frame only if none is in view
                 frame_selected(context, win, area)
 
 
