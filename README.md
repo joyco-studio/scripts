@@ -43,5 +43,7 @@ Copy-paste scripts for [Raycast](https://raycast.com/) workflow integration.
 Custom plugins for exporting Blender data to web-friendly formats.
 
 - **`bezier-exporter`** — Export Bezier curves to JSON for Three.js
+- **`compare-merge`** — Diff two versions of a .blend, preview old/new versions safely and merge picked changes
+- **`texel-coverage`** — Size textures, UVs and culling from the cameras that see them
 
 → [View documentation](./blender/)

@@ -1,0 +1,14 @@
+schema_version = "1.0.0"
+
+id = "compare_merge"
+version = "0.0.0"
+name = "Compare & Merge"
+tagline = "Diff two versions of a .blend, preview them and merge"
+maintainer = "JOYCO"
+type = "add-on"
+tags = ["Scene", "Import-Export", "Pipeline"]
+blender_version_min = "5.1.0"
+license = ["SPDX:GPL-3.0-or-later"]
+
+[permissions]
+files = "Read the .blend file you choose to compare with"

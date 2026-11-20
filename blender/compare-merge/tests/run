@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Headless tests for Compare & Merge. Set BLENDER to pick a Blender.
+set -euo pipefail
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BLENDER="${BLENDER:-$(command -v blender || echo /Applications/Blender.app/Contents/MacOS/Blender)}"
+exec "$BLENDER" -b --factory-startup --python-exit-code 1 --python "$DIR/run_tests.py"
