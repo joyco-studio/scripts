@@ -73,8 +73,9 @@ function current(a) {
   return a.type === "legacy" ? m[1].split(",").map((s) => s.trim()).join(".") : m[1];
 }
 
-// Extension manifests carry the full version (0.3.0-test); bl_info only has room for the numbers.
-const inSync = (a, v = a.version) => [v, v.split("-")[0]].includes(current(a));
+// Extension manifests carry the full version (0.3.0-test) and must match exactly; bl_info only has room
+// for the numbers.
+const inSync = (a, v = a.version) => current(a) === (a.type === "legacy" ? v.split("-")[0] : v);
 
 function sync() {
   for (const a of addons()) {
@@ -199,6 +200,27 @@ function release(tags) {
   }
 }
 
+// Semantic-version order (build metadata ignored): 1.0.0-alpha < 1.0.0-alpha.1 < 1.0.0-beta < 1.0.0.
+function compareSemver(x, y) {
+  const parse = (v) => {
+    const [core, pre] = v.split("+")[0].split(/-(.*)/s);
+    return { core: core.split(".").map(Number), pre: pre ? pre.split(".") : [] };
+  };
+  const a = parse(x);
+  const b = parse(y);
+  for (let i = 0; i < 3; i++) if (a.core[i] !== b.core[i]) return a.core[i] < b.core[i] ? -1 : 1;
+  if (!a.pre.length || !b.pre.length) return b.pre.length - a.pre.length; // a release beats its prereleases
+  for (let i = 0; i < Math.min(a.pre.length, b.pre.length); i++) {
+    const [p, q] = [a.pre[i], b.pre[i]];
+    if (p === q) continue;
+    const [pn, qn] = [/^\d+$/.test(p), /^\d+$/.test(q)];
+    if (pn && qn) return +p < +q ? -1 : 1;
+    if (pn !== qn) return pn ? -1 : 1; // numeric identifiers sort before alphanumeric ones
+    return p < q ? -1 : 1;
+  }
+  return a.pre.length - b.pre.length; // more identifiers wins when the shared ones are equal
+}
+
 // The extensions repository Blender reads (Preferences > Get Extensions > Repositories): the newest zip of
 // each extension sits next to index.json, and older ones move to archive/ so they stay downloadable.
 // server-generate only scans the top folder, and two versions of one id there would be listed as duplicates.
@@ -208,16 +230,7 @@ function pages(dir, zips) {
   fs.mkdirSync(archive, { recursive: true });
   const idOf = (f) => path.basename(f).replace(/-\d+\.\d+\.\d+[^/]*\.zip$/, "");
   const versionOf = (f) => path.basename(f).slice(idOf(f).length + 1, -".zip".length);
-  const cmp = (x, y) => {
-    const [a, b] = [x, y].map((v) => v.split(/[.-]/).map((p) => (/^\d+$/.test(p) ? +p : p)));
-    for (let i = 0; i < Math.max(a.length, b.length); i++) {
-      if (a[i] === b[i]) continue;
-      if (a[i] === undefined) return 1; // 1.0.0 > 1.0.0-test
-      if (b[i] === undefined) return -1;
-      return typeof a[i] === typeof b[i] ? (a[i] < b[i] ? -1 : 1) : typeof a[i] === "number" ? -1 : 1;
-    }
-    return 0;
-  };
+  const cmp = compareSemver;
   for (const zip of zips) fs.copyFileSync(zip, path.join(dir, path.basename(zip)));
   const byId = new Map();
   for (const f of fs.readdirSync(dir).filter((f) => f.endsWith(".zip"))) {

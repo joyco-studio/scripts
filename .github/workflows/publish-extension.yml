@@ -33,6 +33,7 @@ on:
 
 permissions:
   contents: write
+  pages: write # request a Pages build after pushing gh-pages
 
 env:
   BLENDER_SERIES: "5.2"
@@ -42,10 +43,8 @@ jobs:
   publish:
     name: Build and publish
     runs-on: ubuntu-latest
-    # One run at a time pushes to gh-pages.
-    concurrency:
-      group: blender-extensions-repository
-      cancel-in-progress: false
+    # No concurrency group: GitHub keeps only one pending run per group and would drop releases queued
+    # behind it. Runs can overlap instead; the gh-pages push below retries on top of whatever landed first.
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -113,19 +112,42 @@ jobs:
           set -euo pipefail
           mapfile -t zips < "$RUNNER_TEMP/zips"
           if [ ${#zips[@]} -eq 0 ]; then echo "No extensions to publish."; exit 0; fi
-          if git ls-remote --exit-code --heads origin gh-pages > /dev/null; then
-            git fetch origin gh-pages
-            git worktree add -B gh-pages dist/pages origin/gh-pages
-          else
-            git worktree add --orphan -b gh-pages dist/pages
-          fi
-          # Copies the zips, moves older versions to archive/ and regenerates index.json + index.html.
-          node scripts/blender-addons.mjs pages dist/pages "${zips[@]}"
-          cd dist/pages
-          git add -A
-          if git diff --cached --quiet; then echo "Nothing changed."; exit 0; fi
-          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
-            commit -q -m "Publicar $EXTENSIONS"
-          git push origin gh-pages
+          # Rebuilds the repository on top of the current gh-pages and pushes; if another run pushed
+          # first the push is rejected, so fetch again and redo it.
+          git worktree add --detach dist/pages
+          for attempt in 1 2 3 4 5; do
+            cd "$GITHUB_WORKSPACE/dist/pages"
+            # No local branch: start from the remote tip each attempt and push HEAD to it.
+            if git ls-remote --exit-code --heads origin gh-pages > /dev/null; then
+              git fetch -q origin gh-pages
+              git checkout -q -f --detach FETCH_HEAD
+              git clean -fdxq
+            else
+              git checkout -q -f --orphan "gh-pages-new-$attempt"
+              git rm -rfq --cached --ignore-unmatch .
+              git clean -fdxq
+            fi
+            cd "$GITHUB_WORKSPACE"
+            # Copies the zips, moves older versions to archive/ and regenerates index.json + index.html.
+            node scripts/blender-addons.mjs pages dist/pages "${zips[@]}"
+            cd dist/pages
+            git add -A
+            if git diff --cached --quiet; then echo "Nothing changed."; exit 0; fi
+            git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -q -m "Publicar $EXTENSIONS"
+            if git push origin HEAD:refs/heads/gh-pages; then break; fi
+            [ "$attempt" = 5 ] && { echo "::error::Could not push gh-pages"; exit 1; }
+            echo "gh-pages moved, retrying ($attempt)"; sleep $((attempt * 5))
+          done
           echo "### Published to https://${GITHUB_REPOSITORY_OWNER}.github.io/${GITHUB_REPOSITORY#*/}/index.json" >> "$GITHUB_STEP_SUMMARY"
           jq -r '.data[] | "- \(.id) \(.version)"' index.json >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Deploy GitHub Pages
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # A push made with GITHUB_TOKEN may not start a Pages build on its own, so ask for one.
+          [ -s "$RUNNER_TEMP/zips" ] || exit 0
+          if ! gh api -X POST "repos/$GITHUB_REPOSITORY/pages/builds" --silent; then
+            echo "::warning::Could not request a Pages build. Enable Pages from the gh-pages branch (Settings > Pages)."
+          fi
