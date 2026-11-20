@@ -6,7 +6,9 @@ It compares everything a glTF export is made of: objects (transforms, parenting,
 
 ## Install
 
-Download `compare_merge-<version>.zip` from the latest `compare-merge@…` [GitHub Release](https://github.com/joyco-studio/scripts/releases) and install it with Preferences > Get Extensions > ⌄ > Install from Disk (Blender 5.1+, tested on 5.3).
+Install it from the JOYCO extensions repository so Blender tells you about new versions: add `https://joyco-studio.github.io/scripts/index.json` as a remote repository (see [Install and get updates](../README.md#install-and-get-updates)), then search for it in Preferences > Get Extensions (Blender 5.1+, tested on 5.3).
+
+Or download `compare_merge-<version>.zip` from a `compare-merge@…` [GitHub Release](https://github.com/joyco-studio/scripts/releases) and install it with Preferences > Get Extensions > ⌄ > Install from Disk (no update notifications).
 
 For development, symlink the folder instead:
 

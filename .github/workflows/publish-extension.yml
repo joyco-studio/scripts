@@ -1,0 +1,131 @@
+name: Publish Blender extensions
+
+# Builds the Blender add-ons named by one or more `<name>@<version>` tags with the official
+# `blender --command extension build`, attaches them to their GitHub releases and publishes the
+# extensions to the repository Blender reads from GitHub Pages:
+#   https://joyco-studio.github.io/scripts/index.json
+#
+# Release.yml calls it after Changesets tags a release (a release made with GITHUB_TOKEN never fires
+# `release: published`). `release: published` covers releases made by hand, and workflow_dispatch
+# republishes any tags, e.g. `compare-merge@0.2.0 texel-coverage@0.3.0` to fill the repository the first time.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tags:
+        description: "Space-separated release tags, e.g. texel-coverage@0.3.0"
+        required: true
+        type: string
+  workflow_call:
+    inputs:
+      tags:
+        description: "Space-separated release tags"
+        required: false
+        type: string
+        default: ""
+      published:
+        description: "Changesets publishedPackages JSON"
+        required: false
+        type: string
+        default: "[]"
+
+permissions:
+  contents: write
+
+env:
+  BLENDER_SERIES: "5.2"
+  BLENDER_VERSION: "5.2.4"
+
+jobs:
+  publish:
+    name: Build and publish
+    runs-on: ubuntu-latest
+    # One run at a time pushes to gh-pages.
+    concurrency:
+      group: blender-extensions-repository
+      cancel-in-progress: false
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          # For a release event GITHUB_REF is the tag; use the default branch's copy of the scripts
+          # and check the tag out separately below.
+          ref: ${{ github.event_name == 'release' && github.event.repository.default_branch || github.ref }}
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Cache Blender download
+        id: blender-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/blender.tar.xz
+          key: blender-${{ env.BLENDER_VERSION }}-linux-x64
+
+      - name: Download Blender ${{ env.BLENDER_VERSION }}
+        if: steps.blender-cache.outputs.cache-hit != 'true'
+        run: >
+          curl -fsSL --retry 3 -o ~/blender.tar.xz
+          "https://download.blender.org/release/Blender${BLENDER_SERIES}/blender-${BLENDER_VERSION}-linux-x64.tar.xz"
+
+      - name: Install Blender
+        run: |
+          # Shared libraries the Blender binary links against, even in background mode.
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            libx11-6 libxext6 libxrender1 libxfixes3 libxi6 libxkbcommon0 libsm6 libice6 libgl1 libvulkan1
+          mkdir -p ~/blender
+          tar -xJf ~/blender.tar.xz -C ~/blender --strip-components=1
+          echo "$HOME/blender" >> "$GITHUB_PATH"
+          echo "BLENDER=$HOME/blender/blender" >> "$GITHUB_ENV"
+          ~/blender/blender --version
+
+      - name: Validate, build and attach to the releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAGS: ${{ inputs.tags || github.event.release.tag_name }}
+          PUBLISHED: ${{ inputs.published || '[]' }}
+        run: |
+          set -euo pipefail
+          tags="$TAGS $(jq -r '.[] | "\(.name)@\(.version)"' <<< "$PUBLISHED" | tr '\n' ' ')"
+          : > "$RUNNER_TEMP/zips"
+          extensions=""
+          for tag in $tags; do
+            echo "::group::$tag"
+            wt="dist/release/$tag"
+            git worktree add --detach "$wt" "refs/tags/$tag"
+            # Fails if the tag, package.json and blender_manifest.toml disagree or validation fails.
+            ADDONS_ROOT="$wt" node scripts/blender-addons.mjs release "$tag"
+            zips="$(find "$wt/dist/blender" -maxdepth 1 -name '*.zip' 2>/dev/null || true)"
+            if [ -n "$zips" ]; then echo "$zips" >> "$RUNNER_TEMP/zips"; extensions="$extensions $tag"; fi
+            echo "::endgroup::"
+          done
+          echo "EXTENSIONS=${extensions# }" >> "$GITHUB_ENV"
+          echo "Extensions to publish:"; cat "$RUNNER_TEMP/zips"
+
+      - name: Update the extensions repository on gh-pages
+        run: |
+          set -euo pipefail
+          mapfile -t zips < "$RUNNER_TEMP/zips"
+          if [ ${#zips[@]} -eq 0 ]; then echo "No extensions to publish."; exit 0; fi
+          if git ls-remote --exit-code --heads origin gh-pages > /dev/null; then
+            git fetch origin gh-pages
+            git worktree add -B gh-pages dist/pages origin/gh-pages
+          else
+            git worktree add --orphan -b gh-pages dist/pages
+          fi
+          # Copies the zips, moves older versions to archive/ and regenerates index.json + index.html.
+          node scripts/blender-addons.mjs pages dist/pages "${zips[@]}"
+          cd dist/pages
+          git add -A
+          if git diff --cached --quiet; then echo "Nothing changed."; exit 0; fi
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -q -m "Publicar $EXTENSIONS"
+          git push origin gh-pages
+          echo "### Published to https://${GITHUB_REPOSITORY_OWNER}.github.io/${GITHUB_REPOSITORY#*/}/index.json" >> "$GITHUB_STEP_SUMMARY"
+          jq -r '.data[] | "- \(.id) \(.version)"' index.json >> "$GITHUB_STEP_SUMMARY"
