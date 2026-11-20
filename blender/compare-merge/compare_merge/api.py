@@ -56,13 +56,31 @@ def set_choice(idx, choice, cascade=True):
                 View.choices[dep] = choice
                 touched.append(dep)
         if e.cat == "OBJECT" and e.status == diff.ONLY_INCOMING:
-            # Skipping a new object skips its new children; adding one also adds the new objects it
-            # needs (parents, modifier / constraint targets), which Blender would append anyway.
-            linked = incoming_children(e.incoming) + (incoming_needs(e.incoming) if choice == "INCOMING" else [])
-            for c in linked:
+            for c in new_object_closure(e.incoming, adding=choice == "INCOMING"):
                 View.choices[c] = choice
                 touched.append(c)
     return touched
+
+
+def new_object_closure(name, adding):
+    """New (only incoming) objects that go with a new object.
+
+    Skipping one skips its new descendants. Adding one also adds its new descendants and, for every
+    object added that way, the new objects it needs (parent, modifier and constraint targets), which
+    Blender would append anyway, so nothing an added object relies on is left on Skip."""
+    out, todo, seen = [], [name], {name}
+    while todo:
+        cur = todo.pop()
+        linked = incoming_children(cur)
+        if adding:
+            linked += incoming_needs(cur)
+        for idx in linked:
+            n = S.entries[idx].incoming
+            if n not in seen:
+                seen.add(n)
+                out.append(idx)
+                todo.append(n)
+    return out
 
 
 def incoming_needs(name, seen=None):
@@ -106,6 +124,14 @@ def merge():
     ses.refresh_current()
     preview.rebuild()
     return report
+
+
+def recover_after_failed_merge():
+    """merge.apply rolled back what it could; bring the comparison and the preview back."""
+    _before_merge.clear()
+    ses.ensure_linked()
+    ses.refresh_current()
+    preview.rebuild()
 
 
 def close():

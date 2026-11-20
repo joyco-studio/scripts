@@ -185,6 +185,29 @@ def build_review(variant, path):
         outer.children.link(inner)
         inner.hide_render = True
         inner.objects.link(bpy.data.objects.new("Nested", None))
+
+        # A new bone-parented child of a new armature.
+        rig = bpy.data.objects.new("NewRig", bpy.data.armatures.new("NewRigData"))
+        rig.location = (0, 5, 0)
+        link(rig)
+        bpy.context.view_layer.objects.active = rig
+        bpy.ops.object.mode_set(mode="EDIT")
+        bone = rig.data.edit_bones.new("Bone")
+        bone.head, bone.tail = (0, 0, 0), (0, 0, 2)
+        bpy.ops.object.mode_set(mode="OBJECT")
+        kid = bpy.data.objects.new("BoneKid", None)
+        link(kid)
+        kid.parent, kid.parent_type, kid.parent_bone = rig, "BONE", "Bone"
+
+        # A new parent whose new child needs another new object (a Boolean cutter).
+        holder = bpy.data.objects.new("Holder", None)
+        link(holder)
+        drilled = bpy.data.objects.new("Drilled", cube_mesh("DrilledMesh"))
+        link(drilled)
+        drilled.parent = holder
+        cutter = bpy.data.objects.new("Cutter", cube_mesh("CutterMesh", 0.5))
+        link(cutter)
+        drilled.modifiers.new("Hole", "BOOLEAN").object = cutter
     bpy.context.view_layer.update()
     os.makedirs(os.path.dirname(path), exist_ok=True)
     bpy.ops.wm.save_as_mainfile(filepath=path)

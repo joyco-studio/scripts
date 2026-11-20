@@ -461,13 +461,6 @@ def snapshot(owned):
 
 # ---------------------------------------------------------------------------------------------- references
 
-def world_matrix(ob):
-    """World matrix from the parent chain (matrix_world is stale on objects outside any scene)."""
-    if ob.parent is None:
-        return ob.matrix_basis.copy()
-    return world_matrix(ob.parent) @ ob.matrix_parent_inverse @ ob.matrix_basis
-
-
 def references(idb):
     """IDs this one uses directly (for cascading a choice to what an object is made of)."""
     refs = []

@@ -10,6 +10,8 @@
      anything else    -> the appended duplicate is dropped and its users point at the current one
 5. Names are restored, new objects join the collections they are in in the incoming file, removals
    are applied and leftovers of the append are cleaned up.
+If anything raises, Job.rollback() drops what was appended and restores every name. If real data
+was already swapped, the operator still finishes, so its undo step exists and Ctrl+Z restores it.
 
 The operator runs with UNDO, so Ctrl+Z takes the whole merge back.
 """
@@ -76,7 +78,57 @@ def apply(choices, scene_name):
     with bpy.data.libraries.load(path) as (src, _dst):
         names = {a: set(getattr(src, a)) for a in dir(src) if isinstance(getattr(src, a, None), list)}
 
-    renamed = []  # [(local id, original name)]
+    global LAST_TOUCHED
+    job = Job()
+    try:
+        return run(job, path, names, bring, remove, scene_entries, chosen, member, inc_scenes, scene_name)
+    except Exception:
+        job.rollback()
+        raise
+    finally:
+        LAST_TOUCHED = job.touched
+
+
+LAST_TOUCHED = False  # did the last merge change real data (even if it then failed)?
+
+
+class Job:
+    """What a merge has done so far, so a failure can be cleaned up."""
+
+    def __init__(self):
+        self.renamed = []  # [(local id, original name)]
+        self.new = []  # appended data-blocks
+        self.before_libs = set()
+        self.touched = False  # real data was remapped or removed (only undo can take that back)
+
+    def restore_names(self, gone=()):
+        taken = {}
+        for n in self.new:
+            if alive(n) and n.as_pointer() not in gone:
+                taken.setdefault((attr_of(n), n.name), n)
+        for idb, name in self.renamed:
+            if not alive(idb) or idb.as_pointer() in gone:
+                continue
+            clash = taken.get((attr_of(idb), name))
+            if clash is not None and alive(clash) and clash != idb:
+                clash.name = f"{name} (incoming)"
+            idb.name = name
+        self.renamed = []
+
+    def rollback(self):
+        """Best effort after an error: drop what was appended and give everything its name back.
+        If real data was already swapped, the operator tells the artist to press Ctrl+Z."""
+        unused = [n for n in self.new if alive(n) and (not self.touched or n.users == 0)]
+        if unused:
+            bpy.data.batch_remove(unused)
+        self.restore_names()
+        libs = [l for l in bpy.data.libraries if l.as_pointer() not in self.before_libs and not l.is_runtime_data]
+        if libs:
+            bpy.data.batch_remove(libs)
+
+
+def run(job, path, names, bring, remove, scene_entries, chosen, member, inc_scenes, scene_name):
+    renamed = job.renamed
     for attr in names:
         coll = getattr(bpy.data, attr, None)
         if attr in ("libraries", "workspaces", "screens", "window_managers") or \
@@ -95,14 +147,14 @@ def apply(choices, scene_name):
         return local(e.cat, e.current)
 
     before = {i.as_pointer() for i in ses.all_ids()}
-    before_libs = {l.as_pointer() for l in bpy.data.libraries}
+    job.before_libs = {l.as_pointer() for l in bpy.data.libraries}
     by_attr = {}
     for e in bring:
         by_attr.setdefault(snapshot.CAT_ATTR[e.cat], []).append(e.incoming)
     with bpy.data.libraries.load(path, link=False) as (_src, dst):
         for attr, wanted in by_attr.items():
             setattr(dst, attr, wanted)
-    new = [i for i in ses.all_ids() if i.as_pointer() not in before and i.library is None]
+    new = job.new = [i for i in ses.all_ids() if i.as_pointer() not in before and i.library is None]
 
     def local_for(cat, incoming_name):
         """Local data-block that stands for an incoming name after the merge (renames included)."""
@@ -114,7 +166,7 @@ def apply(choices, scene_name):
             return local(cat, e.incoming)
         return local(cat, e.current) or local(cat, e.incoming)
 
-    replaced, kept, dropped = [], [], []
+    replaced, kept, dropped, skipped = [], [], [], []
     for n in new:
         cat = snapshot.ATTR_CAT.get(attr_of(n))
         idx = S.index_inc.get((cat, n.name)) if cat else None
@@ -122,13 +174,19 @@ def apply(choices, scene_name):
             continue  # untracked (shape keys, textures...): stays with whoever uses it
         e = S.entries[idx]
         if e.status == diff.ONLY_INCOMING:
-            kept.append(n)
+            if e.cat == "OBJECT" and (e.cat, e.incoming) not in chosen:
+                # Appended only because a picked object uses it (parent, modifier target), but its
+                # row says Skip: it goes, and its children keep their place in the world (below).
+                skipped.append(n)
+            else:
+                kept.append(n)
             continue
         cur = current_of(e)
         if cur is None:
             kept.append(n)
         elif (e.cat, e.incoming) in chosen:
             cur.user_remap(n)
+            job.touched = True
             replaced.append((cur, n, e))
         else:
             n.user_remap(cur)
@@ -140,34 +198,7 @@ def apply(choices, scene_name):
         bpy.data.batch_remove(doomed)
 
     # Names: incoming names for what came in, original names for everything else.
-    taken = {}
-    for n in new:
-        if alive(n) and n.as_pointer() not in gone:
-            taken.setdefault((attr_of(n), n.name), n)
-    for idb, name in renamed:
-        if not alive(idb) or idb.as_pointer() in gone:
-            continue
-        clash = taken.get((attr_of(idb), name))
-        if clash is not None and alive(clash):
-            clash.name = f"{name} (incoming)"
-        idb.name = name
-
-    # New objects Blender appended only because a picked object uses them (a parent, a modifier
-    # target) but whose row says Skip: honour Skip. Children keep their place in the world.
-    skipped = []
-    for n in kept:
-        if not alive(n) or not isinstance(n, bpy.types.Object):
-            continue
-        if ("OBJECT", n.name) not in chosen:
-            for child in n.children:
-                mw = snapshot.world_matrix(child)
-                child.parent = None
-                child.matrix_world = mw
-            skipped.append(n)
-    if skipped:
-        gone |= {o.as_pointer() for o in skipped}
-        bpy.data.batch_remove(skipped)
-    kept = [n for n in kept if alive(n)]
+    job.restore_names(gone)
 
     # New and replaced objects sit in the collections they are in in the incoming file.
     scene = bpy.data.scenes.get((scene_name, None)) or bpy.context.scene
@@ -209,6 +240,19 @@ def apply(choices, scene_name):
             if c not in targets and (c == scene.collection or c.library is None):
                 c.objects.unlink(ob)
 
+    if skipped:
+        # Let Blender evaluate the scene with the skipped parents in it, so bone / vertex parents,
+        # constraints and poses all count, then detach the children where they are and drop the rest.
+        for ob in skipped:
+            scene.collection.objects.link(ob)
+        scene.view_layers[0].update()
+        worlds = [(child, child.matrix_world.copy()) for ob in skipped for child in ob.children]
+        for child, mw in worlds:
+            child.parent = None
+            child.matrix_world = mw
+        gone |= {o.as_pointer() for o in skipped}
+        bpy.data.batch_remove(skipped)
+
     removed = 0
     for e in remove:
         ob = local("OBJECT", e.current)
@@ -219,6 +263,7 @@ def apply(choices, scene_name):
             child.parent = None
             child.matrix_world = mw
         bpy.data.objects.remove(ob)
+        job.touched = True
         removed += 1
 
     for e in scene_entries:
@@ -229,6 +274,9 @@ def apply(choices, scene_name):
         sc.camera = local_for("OBJECT", st["camera"]) if st["camera"] else None
         sc.world = local_for("WORLD", st["world"]) if st["world"] else None
         preview.apply_scene_settings(sc, st)
+        if e.status == diff.RENAMED:
+            sc.name = e.incoming
+        job.touched = True
 
     # Leftovers of the append nobody uses (shape keys of dropped meshes, ...).
     for _ in range(8):
@@ -238,7 +286,7 @@ def apply(choices, scene_name):
         gone |= {o.as_pointer() for o in orphans}
         bpy.data.batch_remove(orphans)
     used = {i.library.as_pointer() for i in ses.all_ids() if i.library is not None}
-    libs = [l for l in bpy.data.libraries if l.as_pointer() not in before_libs and l.as_pointer() not in used]
+    libs = [l for l in bpy.data.libraries if l.as_pointer() not in job.before_libs and l.as_pointer() not in used]
     if libs:
         bpy.data.batch_remove(libs)
 

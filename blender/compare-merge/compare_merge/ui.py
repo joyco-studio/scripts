@@ -6,7 +6,7 @@ import bpy
 from bpy.props import BoolProperty, CollectionProperty, EnumProperty, FloatProperty, IntProperty, \
     PointerProperty, StringProperty
 
-from . import api, diff, preview, snapshot
+from . import api, diff, merge, preview, snapshot
 from . import session as ses
 from .preview import View
 from .session import S
@@ -397,12 +397,22 @@ class CM_OT_merge(bpy.types.Operator):
             message=f"{n} rows take the incoming version. You can undo with Ctrl+Z.")
 
     def execute(self, context):
+        # Never push undo steps from in here (a nested ed.undo_push corrupts the undo stack and the
+        # next Ctrl+Z crashes). If a merge fails after it already swapped real data, finish anyway:
+        # Blender records this operator's undo step and one Ctrl+Z restores the file.
         try:
             report = api.merge()
         except Exception as e:
             import traceback
             traceback.print_exc()
-            self.report({"ERROR"}, f"Merge failed: {e}")
+            touched = merge.LAST_TOUCHED
+            api.recover_after_failed_merge()
+            sync_rows()
+            preview_windows(context)
+            if touched:
+                self.report({"ERROR"}, f"Merge failed partway: {e}. Press Ctrl+Z to restore the file")
+                return {"FINISHED"}
+            self.report({"ERROR"}, f"Merge failed: {e}. Nothing in the file was changed")
             return {"CANCELLED"}
         sync_rows()
         preview_windows(context)

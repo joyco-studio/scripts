@@ -240,15 +240,28 @@ def test_review():
     check(ball.material_slots[0].material.is_runtime_data and grp.node_tree.library is not None,
           "preview shows the picked node group")
 
+    # Adding a new parent adds its new children and what they need (the child's Boolean cutter).
+    api.set_choice(entry("OBJECT", "Holder"), "INCOMING")
+    check(View.choices.get(entry("OBJECT", "Drilled")) == "INCOMING" and
+          View.choices.get(entry("OBJECT", "Cutter")) == "INCOMING", "new children bring what they need")
+    for n in ("Holder", "Drilled", "Cutter"):
+        View.choices.pop(entry("OBJECT", n), None)
+
+    # A bone-parented new child whose new armature is skipped keeps its place in the world.
+    kid_world = Vector((0, 5, 2))  # NewRig at (0, 5, 0), its bone's tail 2 up
+    View.choices[entry("OBJECT", "BoneKid")] = "INCOMING"
+
     # A new child needs its new parent; Skip on the parent is honoured by preview and merge alike.
     child_i, parent_i = entry("OBJECT", "NewChild"), entry("OBJECT", "NewParent")
     api.set_choice(child_i, "INCOMING")
     check(View.choices.get(parent_i) == "INCOMING", "adding a new child adds its new parent")
     View.choices[parent_i] = "CURRENT"
     preview.rebuild()
-    shown = next(o for o in sc.objects if o.get("cm_src") == "NewChild")
-    check(shown.parent is None and (shown.matrix_world.translation - Vector((5, 0, 1))).length < 1e-5,
-          "preview: skipped parent, child stays in place")
+    vl.update()
+    shown = next(o for o in sc.objects if o.get("cm_src", o.name) == "NewChild" and o.visible_get(view_layer=vl))
+    check((shown.matrix_world.translation - Vector((5, 0, 1))).length < 1e-5 and
+          not any(o.name == "NewParent" and o.visible_get(view_layer=vl) for o in sc.objects),
+          f"preview: skipped parent hidden, child in place ({tuple(shown.matrix_world.translation)})")
 
     api.set_choice(entry("OBJECT", "Nested"), "INCOMING")
     api.set_choice(entry("SCENE", "Scene"), "INCOMING")
@@ -259,6 +272,10 @@ def test_review():
     check(child is not None and child.parent is None and (child.matrix_world.translation - Vector((5, 0, 1))).length < 1e-5,
           "merge: child added, skipped parent left out, world position kept")
     check(bpy.data.objects.get(("NewParent", None)) is None, "merge: skipped parent not added")
+    kid = bpy.data.objects.get(("BoneKid", None))
+    check(kid is not None and kid.parent is None and bpy.data.objects.get(("NewRig", None)) is None and
+          (kid.matrix_world.translation - kid_world).length < 1e-5,
+          f"bone-parented child keeps its world position ({kid and tuple(kid.matrix_world.translation)} vs {tuple(kid_world)})")
     outer, inner = bpy.data.collections.get(("Outer", None)), bpy.data.collections.get(("Inner", None))
     check(outer is not None and inner is not None and inner.name in outer.children and outer.name in
           bpy.context.scene.collection.children and inner.hide_render, "new nested collections keep their tree")
@@ -275,13 +292,76 @@ def test_review():
     api.close()
 
 
+def test_failed_merge_rolls_back():
+    """An error halfway through a merge leaves no temporary names and nothing appended behind."""
+    print("failed merge")
+    from compare_merge import merge
+    bpy.ops.wm.open_mainfile(filepath=CUR)
+    api.start(INC)
+    api.set_choice(entry("OBJECT", "Cube"), "INCOMING")
+    api.set_choice(entry("OBJECT", "Cone"), "INCOMING")
+    before = sorted(i.name_full for i in ses.all_ids() if i.library is None and not i.is_runtime_data)
+    real_attr_of, calls = merge.attr_of, {"n": 0}
+
+    def boom(idb):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("simulated failure after append")
+        return real_attr_of(idb)
+    merge.attr_of = boom
+    try:
+        api.merge()
+        check(False, "merge should have raised")
+    except RuntimeError:
+        pass
+    finally:
+        merge.attr_of = real_attr_of
+    after = sorted(i.name_full for i in ses.all_ids() if i.library is None and not i.is_runtime_data)
+    check(after == before, f"rolled back: same data-blocks and names ({set(after) ^ set(before)})")
+    api.recover_after_failed_merge()
+    check(ses.library() is not None and preview.preview_scene() is not None and View.choices,
+          "comparison and picks survive a failed merge")
+    api.close()
+
+
+def test_operator_undo():
+    """The real Merge operator, a real undo and redo: data and picks follow."""
+    print("operator undo / redo")
+    import compare_merge
+    from compare_merge import ui
+    compare_merge.register()
+    try:
+        bpy.ops.wm.open_mainfile(filepath=CUR)
+        api.start(INC)
+        cube_i = entry("OBJECT", "Cube")
+        api.set_choice(cube_i, "INCOMING")
+        ui.sync_rows()
+        bpy.ops.ed.undo_push(message="picked")
+        check(bpy.ops.compare_merge.merge("EXEC_DEFAULT") == {"FINISHED"}, "operator merged")
+        bpy.ops.ed.undo_push(message="Merge")  # the UI records this for UNDO operators; background doesn't
+        x = lambda: round(bpy.data.objects["Cube", None].location.x, 4)
+        check(x() == 1.0, "merged Cube location")
+        bpy.ops.ed.undo()
+        compare_merge._after_undo()  # what the timer runs after undo_post in the UI
+        check(x() == 0.0, "undo restores the file's Cube")
+        check(View.choices.get(entry("OBJECT", "Cube")) == "INCOMING", "undo brings the picks back")
+        check(ses.library() is not None and preview.preview_scene() is not None, "undo: preview rebuilt")
+        bpy.ops.ed.redo()
+        compare_merge._after_undo()
+        check(x() == 1.0 and status("OBJECT", "Cube") == diff.SAME, "redo merges again")
+        api.close()
+    finally:
+        compare_merge.unregister()
+
+
 def main():
     fixtures.build("incoming", INC)
     fixtures.build("current", CUR)
     fixtures.build_review("incoming", RINC)
     fixtures.build_review("current", RCUR)
     bpy.ops.wm.open_mainfile(filepath=CUR)
-    for t in (test_diff, test_preview_is_safe, test_views, test_merge, test_close, test_review):
+    for t in (test_diff, test_preview_is_safe, test_views, test_merge, test_close, test_review,
+              test_failed_merge_rolls_back, test_operator_undo):
         try:
             t()
         except Exception:

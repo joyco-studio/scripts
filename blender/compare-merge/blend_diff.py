@@ -28,4 +28,5 @@ else:
 api.close()
 with open(os.environ["CM_RESULT"], "w") as fh:
     fh.write(out + "\n")
-sys.exit(2 if any(e.status != diff.SAME for e in entries) else 0)
+# Blender ignores SystemExit codes from --python scripts on some versions (same as texel_cli.py).
+os._exit(2 if any(e.status != diff.SAME for e in entries) else 0)

@@ -14,7 +14,7 @@ how Ghost / Blink / Solo find what to show for the selected row.
 
 import bpy
 
-from . import diff, snapshot
+from . import diff
 from . import session as ses
 from .session import S
 
@@ -112,7 +112,10 @@ class Planner:
         parent = None
         if ob.parent:
             if self.skipped(ob.parent):
-                parent = "CLEAR"
+                # Its new parent stays out (Skip): keep pointing at it without showing it. Blender
+                # still evaluates hidden parents (bones and poses too), so the child sits exactly
+                # where Merge will leave it once it detaches it in place.
+                parent = None
             else:
                 pp = self.obj(self.version(ob.parent))
                 parent = pp if pp != ob.parent else None
@@ -228,11 +231,7 @@ class Builder:
             if d.animation_data is None:
                 d.animation_data_create()
             d.animation_data.action = action
-        if parent == "CLEAR":  # its new parent is skipped: it stays where it is in the world
-            mw = snapshot.world_matrix(ob)
-            d.parent = None
-            d.matrix_world = mw
-        elif parent is not None:
+        if parent is not None:
             d.parent = self.nested(parent)
         elif self.ghost and ob.parent is not None and self.main is not None:
             d.parent = self.main.made.get(ob.parent, ob.parent)
