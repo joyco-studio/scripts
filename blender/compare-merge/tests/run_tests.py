@@ -390,6 +390,15 @@ def test_operator_undo():
         cube_i = entry("OBJECT", "Cube")
         api.set_choice(cube_i, "INCOMING")
         ui.sync_rows()
+        groups = ui.merge_overview()
+        names = {(ses.S.entries[i].cat, ses.S.entries[i].name) for i in groups[diff.CHANGED]}
+        check({("OBJECT", "Cube"), ("MESH", "CubeMesh"), ("MATERIAL", "Wood")} <= names and
+              not groups[diff.ONLY_INCOMING] and not groups[diff.ONLY_CURRENT], f"merge overview lists the picks ({names})")
+        check("location" in ui.change_summary(ses.S.entries[cube_i]), "overview says what changed on the Cube")
+        p = ui.props()
+        p.search = "nothing matches this"
+        check(bpy.ops.compare_merge.show_row(index=cube_i) == {"FINISHED"} and p.active == cube_i and not p.search,
+              "clicking an overview row selects it and clears a search that hid it")
         bpy.ops.ed.undo_push(message="picked")
         check(bpy.ops.compare_merge.merge("EXEC_DEFAULT") == {"FINISHED"}, "operator merged")
         bpy.ops.ed.undo_push(message="Merge")  # the UI records this for UNDO operators; background doesn't
