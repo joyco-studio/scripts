@@ -761,10 +761,13 @@ class CM_PT_details(CM_Panel, bpy.types.Panel):
                 col.label(text=f"… {len(e.changes) - 60} more")
             return
         # Grouped by unit, each with its own Current | Incoming: some fields from each file.
-        for u in us[:40]:
+        for u in us[:UNITS_SHOWN]:
             draw_unit(col, p.active, u)
-        if len(us) > 40:
-            col.label(text=f"… {len(us) - 40} more")
+        if len(us) > UNITS_SHOWN:  # the rest fold away, but stay pickable
+            header, body = col.panel("cm_units_more", default_closed=True)
+            header.label(text=f"{len(us) - UNITS_SHOWN} more")
+            for u in us[UNITS_SHOWN:] if body is not None else ():
+                draw_unit(body, p.active, u)
 
 
 def draw_fields(col, changes):
@@ -779,6 +782,7 @@ def draw_fields(col, changes):
 
 
 UNIT_FOLD = 6  # units with more fields than this fold their field rows away
+UNITS_SHOWN = 40  # units listed open in Details; the rest are in a folded section
 
 
 def draw_unit(col, idx, u):

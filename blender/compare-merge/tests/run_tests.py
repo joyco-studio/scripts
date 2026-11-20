@@ -452,7 +452,7 @@ def test_units():
     check(not close(cur_pos, inc_pos) and not close(cur_uv, inc_uv), "fixture: positions and UVs differ")
 
     keys = unit_keys("MESH", "SplitMesh", locked=False)
-    check({"positions", "uv:UVMap", "attr:Weight", "key:Key 1"} <= keys, f"SplitMesh units ({sorted(keys)})")
+    check({"positions", "uv:UVMap", "attr:Weight", "key:Key 1", "key:A"} <= keys, f"SplitMesh units ({sorted(keys)})")
     check(not unit_keys("MESH", "SplitMesh", locked=True) - {"weights"}, "SplitMesh: nothing else locked")
     from compare_merge import apply
     sub = apply.units(entry("MESH", "SubdivMesh"))
@@ -463,6 +463,9 @@ def test_units():
     check(len([k for k in pk if "Roughness" in k]) == 1 and len([k for k in pk if "Base Color" in k]) == 1,
           f"Painted: Roughness and Base Color pick separately ({sorted(pk)})")
     check({"rna:energy", "rna:color"} <= unit_keys("LIGHT", "Bulb", locked=False), "Bulb units")
+    third = [u for u in apply.units(entry("MATERIAL", "Painted")) if u.key.startswith("node:Math › ")]
+    check(third and all(u.locked for u in third) and "node:Math · operation" in unit_keys("MATERIAL", "Painted", False),
+          f"an input only one side's node settings show is locked ({[(u.key, u.locked) for u in third]})")
 
     # Preview: their UVs, our positions.
     mi = entry("MESH", "SplitMesh")
@@ -551,6 +554,8 @@ def test_units_merge():
     mi = entry("MESH", "SplitMesh")
     api.set_unit(mi, "uv:UVMap", "INCOMING")
     api.set_unit(mi, "attr:Weight", "INCOMING")
+    api.set_unit(mi, "key:Key 1", "INCOMING")
+    api.set_unit(mi, "key:A", "INCOMING")
     api.set_unit(entry("OBJECT", "Mover"), "transform", "INCOMING")
     rough = next(u.key for u in apply.units(entry("MATERIAL", "Painted")) if "Roughness" in u.key)
     api.set_unit(entry("MATERIAL", "Painted"), rough, "INCOMING")
@@ -566,6 +571,9 @@ def test_units_merge():
     check(close(pos, cur_pos) and close(uv, inc_uv) and close(basis, cur_basis),
           "merge: current positions and Basis, incoming UVs")
     check("Weight" in me.attributes and abs(me.attributes["Weight"].data[3].value - 0.3) < 1e-6, "attribute added")
+    kb = me.shape_keys.key_blocks
+    check("A" in kb and kb["Key 1"].relative_key == kb["A"],
+          f"picked key relative to another picked key added after it ({kb['Key 1'].relative_key.name})")
     mover = bpy.data.objects["Mover", None]
     check(tuple(mover.location) == (0, 0, 3) and mover.material_slots[0].material.name == "MatA",
           "Mover: incoming location, current slot material")
@@ -598,6 +606,30 @@ def test_units_merge():
     want = (f"['MoverMesh', 'SplitMesh', 'SubdivMesh'] {round(float(inc_uv.sum()), 4)} "
             f"{round(float(cur_pos.reshape(-1, 3)[8][2]), 4)} 3.0")
     check(res == want, f"merged file reopens with the mix ({res} vs {want})")
+
+    # A copy that fails after editing real data: the merge says so (Ctrl+Z), not "nothing changed".
+    from compare_merge import merge
+    bpy.ops.wm.open_mainfile(filepath=UCUR)
+    api.start(UINC)
+    api.set_unit(entry("MESH", "SplitMesh"), "uv:UVMap", "INCOMING")
+    api.set_unit(entry("MESH", "SplitMesh"), "attr:Weight", "INCOMING")
+    real_copy, calls = apply.copy_unit, {"n": 0}
+
+    def flaky(*args):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("simulated failure after the first unit")
+        return real_copy(*args)
+    apply.copy_unit = flaky
+    try:
+        api.merge()
+        check(False, "merge should have raised")
+    except RuntimeError:
+        check(merge.LAST_TOUCHED, "a mixed copy that fails halfway counts as touched")
+    finally:
+        apply.copy_unit = real_copy
+    api.recover_after_failed_merge()
+    api.close()
 
     # Vice versa: their positions, our UVs.
     bpy.ops.wm.open_mainfile(filepath=UCUR)

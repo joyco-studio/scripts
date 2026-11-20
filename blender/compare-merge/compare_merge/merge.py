@@ -204,8 +204,8 @@ def run(job, path, names, bring, remove, scene_entries, chosen, mixed, member, i
     # Mixed rows. Every other appended data-block is reconciled by now, so what the appended copy
     # points at (materials, parent, action...) is already what stays in the file: resolve is identity.
     for cur, n, e in partial:
+        job.touched = True  # before copying: a copy that fails halfway has already edited real data
         copy_units(e.cat, mixed[(e.cat, e.incoming)], cur, n, lambda i: i)
-        job.touched = True
 
     doomed = [cur for cur, _n, _e in replaced] + dropped
     gone = {i.as_pointer() for i in doomed}

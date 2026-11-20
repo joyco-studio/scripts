@@ -243,6 +243,10 @@ def build_units(variant, path):
     split_ob.shape_key_add(name="Basis", from_mix=False)
     k1 = split_ob.shape_key_add(name="Key 1", from_mix=False)
     k1.data[0].co.z += 1.0 if inc else 2.0
+    if inc:  # a new key, listed after Key 1 in the diff, that Key 1 is now relative to
+        a = split_ob.shape_key_add(name="A", from_mix=False)
+        a.data[1].co.z += 1.0
+        k1.relative_key = a
 
     # Different topology: incoming is subdivided once more.
     sub = bpy.data.meshes.new("SubdivMesh")
@@ -270,6 +274,10 @@ def build_units(variant, path):
     bsdf = next(n for n in painted.node_tree.nodes if n.type == "BSDF_PRINCIPLED")
     bsdf.inputs["Roughness"].default_value = 0.9 if inc else 0.3
     bsdf.inputs["Base Color"].default_value = (0, 0, 1, 1) if inc else (1, 0, 0, 1)
+    math = painted.node_tree.nodes.new("ShaderNodeMath")  # a third input only with MULTIPLY_ADD
+    math.name = "Math"
+    math.operation = "MULTIPLY_ADD" if inc else "ADD"
+    painted.node_tree.links.new(math.outputs[0], bsdf.inputs["Metallic"])
 
     # A light with two property changes.
     bulb = bpy.data.lights.new("Bulb", "POINT")

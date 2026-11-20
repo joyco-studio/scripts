@@ -73,6 +73,8 @@ def lock(cat, key, fields, keys, cur):
     """Why a unit can't be taken on its own, or ""."""
     if key.startswith("field:"):
         return LOCK_WHOLE
+    if any(ITEMS.match(v) for _f, a, b in fields for v in (a, b)):  # a hashed list: nothing copies it on its own
+        return "A list of values (targets, ramp stops...): take the whole row"
     if cat == "OBJECT":
         if "type" in keys:
             return LOCK_TYPE
@@ -99,8 +101,9 @@ def lock(cat, key, fields, keys, cur):
     if key == "wiring" or (key.startswith("node:") and "wiring" in keys):
         return LOCK_WIRING
     if key.startswith(("node:", "rna:")):
-        if any(ITEMS.match(v) for _f, a, b in fields for v in (a, b)):
-            return "A list of values: take the whole row"
+        if key.startswith("node:") and split_node_field(key[5:])[1] == " › " and \
+                any("—" in (a, b) for _f, a, b in fields):
+            return "This input only exists with the node's other settings on one side: take the whole row"
         if key.startswith("rna:") and cur is not None and not settable(cur, key[4:]):
             return "Read-only here: take the whole row"
         if key.startswith("node:") and cur is not None:
@@ -355,10 +358,18 @@ def copy_shape_key(dst, src, name):
     dkb.data.foreach_set("co", snapshot.read(skb.data, "co", len(dst.vertices), 3))
     dkb.slider_min, dkb.slider_max = skb.slider_min, skb.slider_max
     dkb.value = skb.value
-    dkb.relative_key = keys.get(skb.relative_key.name) or dst.shape_keys.reference_key
+    relink_shape_key(dst, src, name)
     dkb.vertex_group = skb.vertex_group
     dkb.interpolation = skb.interpolation
     dkb.mute = skb.mute
+
+
+def relink_shape_key(dst, src, name):
+    """Point a key at the key it is relative to, by name (that one may be picked too, see copy_units)."""
+    skb = src.shape_keys.key_blocks.get(name) if src.shape_keys else None
+    dkb = dst.shape_keys.key_blocks.get(name) if dst.shape_keys else None
+    if skb is not None and dkb is not None:
+        dkb.relative_key = dst.shape_keys.key_blocks.get(skb.relative_key.name) or dst.shape_keys.reference_key
 
 
 def copy_mesh_materials(dst, src, resolve):
@@ -418,3 +429,7 @@ def copy_unit(cat, unit, dst, src, resolve):
 def copy_units(cat, us, dst, src, resolve):
     for u in us:
         copy_unit(cat, u, dst, src, resolve)
+    if cat == "MESH":  # a picked key can be relative to another picked key added after it
+        for u in us:
+            if u.key.startswith("key:"):
+                relink_shape_key(dst, src, u.key[4:])
