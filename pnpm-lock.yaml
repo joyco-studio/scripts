@@ -14,6 +14,8 @@ importers:
 
   blender/bezier-exporter: {}
 
+  blender/compare-merge: {}
+
   blender/texel-coverage: {}
 
   cli:

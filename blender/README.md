@@ -1,12 +1,13 @@
 # Blender Add-ons
 
-Custom Blender plugins for exporting data to web-friendly formats.
+Custom Blender plugins for exporting data to web-friendly formats and managing the files they come from.
 
 ## Add-ons
 
 | Add-on | Description |
 |--------|-------------|
 | [bezier-exporter](./bezier-exporter/) | Export Bezier curves to JSON for Three.js |
+| [compare-merge](./compare-merge/) | Diff two versions of a .blend, preview either version of every change and merge the ones you pick |
 | [texel-coverage](./texel-coverage/) | Size textures, lay out UVs and cull geometry from the cameras that see them; optimizes glTF exports |
 
 ## Versions and releases

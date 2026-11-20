@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Compare & Merge from the command line: a git-style diff of two .blend files.
+#   blend-diff CURRENT.blend INCOMING.blend [--all] [--json] [--limit N]
+# Runs Blender headless with factory settings and this checkout's add-on. stdout carries only the
+# result; Blender's log goes to stderr. Exit code: 0 identical, 1 error, 2 the files differ.
+set -euo pipefail
+
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -z "${BLENDER:-}" ]; then
+  if command -v blender >/dev/null 2>&1; then BLENDER=blender
+  elif [ -x /Applications/Blender.app/Contents/MacOS/Blender ]; then BLENDER=/Applications/Blender.app/Contents/MacOS/Blender
+  else echo "blend-diff: Blender not found; set BLENDER=/path/to/blender" >&2; exit 1
+  fi
+fi
+if [ $# -lt 2 ] || [ ! -f "$1" ] || [ ! -f "$2" ]; then
+  echo "usage: blend-diff CURRENT.blend INCOMING.blend [--all] [--json] [--limit N]" >&2; exit 1
+fi
+CURRENT="$1"; shift
+
+RESULT="$(mktemp -t blend-diff.XXXXXX)"
+trap 'rm -f "$RESULT"' EXIT
+set +e
+CM_RESULT="$RESULT" "$BLENDER" -b "$CURRENT" --factory-startup --python-exit-code 1 \
+  --python "$DIR/blend_diff.py" -- "$@" 1>&2
+CODE=$?
+set -e
+cat "$RESULT"
+exit $CODE
