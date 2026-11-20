@@ -10,11 +10,14 @@ It is derived, never patched: rebuild() throws every preview object away and bui
 from the current choices, so the preview can't drift from the merge plan. A "plan" is a hashable
 tuple describing one shown object; comparing plans tells which objects a choice affects, which is
 how Ghost / Blink / Solo find what to show for the selected row.
+
+A row with unit picks (Mixed) is shown as a runtime copy of the current data-block with the picked
+units copied in from the incoming one, by the same apply.copy_unit Merge uses.
 """
 
 import bpy
 
-from . import diff
+from . import apply, diff, snapshot
 from . import session as ses
 from .session import S
 
@@ -32,26 +35,29 @@ class View:
     blink_on = False
     main_affected = []  # names of preview-scene objects showing the selected row's chosen version
     ghost_objects = []  # names of objects showing the other version
-    choices = {}  # entry index -> "CURRENT" | "INCOMING"
+    choices = {}  # entry index -> "CURRENT" | "INCOMING" | ("MIXED", unit keys) (see session.state)
 
 
 # ---------------------------------------------------------------------------------------------- planning
 
 class Planner:
     def __init__(self, choice):
-        self.choice = choice  # entry index -> "CURRENT" | "INCOMING"
+        self.choice = choice  # entry index -> a pick (session.state reads it)
         self.memo = {}
 
     def side(self, idx):
+        """CURRENT | INCOMING | MIXED."""
         e = S.entries[idx]
         if e.status == diff.ONLY_INCOMING:
-            return "INCOMING"
+            return ses.INCOMING
         if e.status in (diff.ONLY_CURRENT, diff.SAME):
-            return "CURRENT"
-        return self.choice(idx)
+            return ses.CURRENT
+        return ses.state(self.choice(idx))
 
     def version(self, idb):
-        """The chosen version of a data-block (identical content counts as no change)."""
+        """The chosen version of a data-block (identical content counts as no change). A mixed row
+        gives a plan ("MIX", ...) for a copy of the current one with the picked units; a mixed
+        object gives the current object (obj() adds the units)."""
         if idb is None:
             return None
         idx = ses.entry_of(idb)
@@ -60,14 +66,40 @@ class Planner:
         e = S.entries[idx]
         if e.status == diff.SAME:
             return idb
-        if self.side(idx) == "INCOMING":
+        side = self.side(idx)
+        if side == ses.INCOMING:
             return ses.get_incoming(e.cat, e.incoming) or idb
-        return ses.get_current(e.cat, e.current) or idb
+        cur = ses.get_current(e.cat, e.current) or idb
+        if side == ses.MIXED and e.cat != "OBJECT":
+            inc = ses.get_incoming(e.cat, e.incoming)
+            if inc is not None:
+                keys = ses.taken(self.choice(idx))
+                deps = tuple(self.version(r) for r in snapshot.references(cur) + snapshot.references(inc))
+                return ("MIX", idx, cur, inc, keys, deps)
+        return cur
+
+    def mix(self, ob):
+        """(incoming object, unit keys) when `ob` is the current side of a mixed object row."""
+        idx = ses.entry_of(ob)
+        if idx is None or not ses.is_current(ob) or self.side(idx) != ses.MIXED:
+            return None
+        inc = ses.get_incoming("OBJECT", S.entries[idx].incoming)
+        return (inc, ses.taken(self.choice(idx))) if inc is not None else None
+
+    @staticmethod
+    def materials_of(data):
+        """The data-block whose material list a (planned) data-block shows."""
+        if isinstance(data, tuple) and data[0] == "MIX":
+            _, _idx, cur, inc, keys, _deps = data
+            return inc if "materials" in keys else cur
+        return data
 
     def material(self, m):
         """Plan for a material: the chosen version, or a runtime copy whose image / node-group nodes
         point at the chosen versions of those (picked independently of the material)."""
         t = self.version(m)
+        if isinstance(t, tuple):  # mixed: the builder points its nodes at the chosen images / groups
+            return t
         swaps = []
         if t is not None and t.node_tree:
             for n in t.node_tree.nodes:
@@ -82,22 +114,29 @@ class Planner:
     def skipped(self, ob):
         """A new object whose row says Skip (Merge won't bring it even if something uses it)."""
         idx = ses.entry_of(ob)
-        return idx is not None and S.entries[idx].status == diff.ONLY_INCOMING and self.choice(idx) != "INCOMING"
+        return idx is not None and S.entries[idx].status == diff.ONLY_INCOMING and \
+            ses.state(self.choice(idx)) != ses.INCOMING
 
     def obj(self, ob):
         """Plan for showing `ob` (already the chosen version): ob itself, or ("OB", ob, edits...)."""
         if ob in self.memo:
             return self.memo[ob]
         self.memo[ob] = ob  # cycle guard (objects that target each other in modifiers)
-        data = ob.data
+        mix = self.mix(ob)
+
+        def own(key):
+            """The object a reference is read from: the incoming one for a unit a mixed row takes."""
+            return mix[0] if mix is not None and key in mix[1] else ob
+        data = own("data").data
         new_data = self.version(data) if isinstance(data, bpy.types.ID) else None
-        if new_data == data:
+        if new_data == ob.data:
             new_data = None
-        src = new_data or data
+        src = self.materials_of(new_data or ob.data)
         mats = []
         n_slots = len(src.materials) if hasattr(src, "materials") else len(ob.material_slots)
         for i in range(n_slots):
-            slot = ob.material_slots[i] if i < len(ob.material_slots) else None
+            owner = own(f"slot:{i + 1}")
+            slot = owner.material_slots[i] if i < len(owner.material_slots) else None
             if slot is not None and slot.link == "OBJECT":
                 m = slot.material
             else:
@@ -107,22 +146,25 @@ class Planner:
                 if p != m:
                     mats.append((i, p))
         action = None
-        if ob.animation_data and ob.animation_data.action:
-            a = self.version(ob.animation_data.action)
-            action = a if a != ob.animation_data.action else None
+        ad = own("animation").animation_data
+        if ad and ad.action:
+            a = self.version(ad.action)
+            action = a if a != (ob.animation_data.action if ob.animation_data else None) else None
         parent = None
-        if ob.parent:
-            if self.skipped(ob.parent):
+        par = own("parent").parent
+        if par:
+            if self.skipped(par):
                 # Its new parent stays out (Skip): keep pointing at it without showing it. Blender
                 # still evaluates hidden parents (bones and poses too), so the child sits exactly
                 # where Merge will leave it once it detaches it in place.
                 parent = None
             else:
-                pp = self.obj(self.version(ob.parent))
+                pp = self.obj(self.version(par))
                 parent = pp if pp != ob.parent else None
         targets = []  # (modifiers | constraints, item name, property, "OBJ" plan | "ID" data-block | "NONE")
-        for kind in ("modifiers", "constraints"):
+        for kind, prefix in (("modifiers", "mod"), ("constraints", "con")):
             for item in getattr(ob, kind):
+                item = getattr(own(f"{prefix}:{item.name}"), kind).get(item.name) or item
                 for p in item.bl_rna.properties:
                     if p.type != "POINTER" or p.is_readonly:
                         continue
@@ -138,10 +180,10 @@ class Planner:
                         v = self.version(t)
                         if v != t:
                             targets.append((kind, item.name, p.identifier, "ID", v))
-        if new_data is None and not mats and action is None and parent is None and not targets:
+        if new_data is None and not mats and action is None and parent is None and not targets and mix is None:
             plan = ob
         else:
-            plan = ("OB", ob, new_data, tuple(mats), action, parent, tuple(targets))
+            plan = ("OB", ob, new_data, tuple(mats), action, parent, tuple(targets), mix)
         self.memo[ob] = plan
         return plan
 
@@ -154,14 +196,14 @@ def slots(planner, scene):
             continue
         idx = ses.entry_of(ob)
         e = S.entries[idx] if idx is not None else None
-        if e is not None and e.status == diff.ONLY_CURRENT and planner.choice(idx) == "INCOMING":
+        if e is not None and e.status == diff.ONLY_CURRENT and ses.state(planner.choice(idx)) == ses.INCOMING:
             out.append((("C", ob.name), None, ob))  # removal chosen
             continue
         out.append((("C", ob.name), planner.obj(planner.version(ob)), ob))
     for idx, e in enumerate(S.entries):
         if e.cat == "OBJECT" and e.status == diff.ONLY_INCOMING:
             inc = ses.get_incoming("OBJECT", e.incoming)
-            plan = planner.obj(inc) if inc is not None and planner.choice(idx) == "INCOMING" else None
+            plan = planner.obj(inc) if inc is not None and ses.state(planner.choice(idx)) == ses.INCOMING else None
             out.append((("I", e.incoming), plan, None))
     return out
 
@@ -169,12 +211,13 @@ def slots(planner, scene):
 # ---------------------------------------------------------------------------------------------- building
 
 class Builder:
-    def __init__(self, coll, ghost=False, main=None):
+    def __init__(self, coll, planner, ghost=False, main=None):
         self.coll = coll
+        self.planner = planner  # resolves what mixed units point at
         self.ghost = ghost
         self.main = main  # the main builder, for a ghost's unaffected parents
         self.made = {}
-        self.mats = {}
+        self.mats = {}  # plan -> runtime copy (materials, mixed data-blocks)
 
     def link(self, ob):
         try:
@@ -185,6 +228,8 @@ class Builder:
     def material(self, plan):
         if not isinstance(plan, tuple):
             return plan
+        if plan[0] == "MIX":
+            return self.mixed(plan)
         if plan not in self.mats:
             _, m, swaps = plan
             d = ses.mark_draft(m.copy())
@@ -195,6 +240,46 @@ class Builder:
                     setattr(node, attr, value)
             self.mats[plan] = d
         return self.mats[plan]
+
+    def datablock(self, plan):
+        """The data-block a plan from Planner.version stands for."""
+        return self.material(plan) if isinstance(plan, tuple) else plan
+
+    def mixed(self, plan):
+        """A runtime copy of the current data-block with the picked units taken from the incoming one."""
+        if plan not in self.mats:
+            _, idx, cur, inc, keys, _deps = plan
+            d = ses.mark_draft(cur.copy())
+            d.name = f"{cur.name} (preview)"
+            self.mats[plan] = d
+            apply.copy_units(S.entries[idx].cat, [u for u in apply.units(idx) if u.key in keys], d, inc,
+                             self.resolve)
+            if getattr(d, "shape_keys", None) is not None:
+                ses.mark_draft(d.shape_keys)
+            nt = getattr(d, "node_tree", None)
+            for n in nt.nodes if nt is not None else ():  # images / node groups picked on their own rows
+                for attr in ("image", "node_tree"):
+                    ref = getattr(n, attr, None)
+                    if isinstance(ref, bpy.types.ID):
+                        v = self.planner.version(ref)
+                        if v != ref and isinstance(v, bpy.types.ID):
+                            setattr(n, attr, v)
+        return self.mats[plan]
+
+    def resolve(self, idb):
+        """What the preview shows for a data-block an incoming one points at (apply.copy_unit's
+        resolve): the chosen version, as Merge would leave it."""
+        if not isinstance(idb, bpy.types.ID):
+            return idb
+        idx = ses.entry_of(idb)
+        if idx is not None and S.entries[idx].status == diff.SAME and S.entries[idx].current:
+            idb = ses.get_current(S.entries[idx].cat, S.entries[idx].current) or idb
+        p = self.planner
+        if isinstance(idb, bpy.types.Object):
+            return idb if p.skipped(idb) else self.nested(p.obj(p.version(idb)))
+        if isinstance(idb, bpy.types.Material):
+            return self.material(p.material(idb))
+        return self.datablock(p.version(idb))
 
     def nested(self, plan):
         """A parent / modifier target: reuse the main preview's object when the ghost can."""
@@ -214,16 +299,19 @@ class Builder:
                     self.link(plan)
                 self.made[plan] = plan
                 return plan
-            ob, data, mats, action, parent, targets = plan, None, (), None, None, ()
+            ob, data, mats, action, parent, targets, mix = plan, None, (), None, None, (), None
         else:
-            _, ob, data, mats, action, parent, targets = plan
+            _, ob, data, mats, action, parent, targets, mix = plan
         d = ses.mark_draft(ob.copy())
         d.name = f"{ob.name} ({'other' if self.ghost else 'preview'})"
         d["cm_src"] = ob.name
         self.made[plan] = d
         self.coll.objects.link(d)
+        if mix is not None:  # the picked object units; references are wired below, the same way
+            idx = ses.entry_of(ob)
+            apply.copy_units("OBJECT", [u for u in apply.units(idx) if u.key in mix[1]], d, mix[0], self.resolve)
         if data is not None:
-            d.data = data
+            d.data = self.datablock(data)
         for i, mp in mats:
             if i < len(d.material_slots):
                 d.material_slots[i].link = "OBJECT"
@@ -234,8 +322,8 @@ class Builder:
             d.animation_data.action = action
         if parent is not None:
             reparent(d, self.nested(parent))
-        elif self.ghost and ob.parent is not None and self.main is not None:
-            reparent(d, self.main.made.get(ob.parent, ob.parent))
+        elif self.ghost and d.parent is not None and self.main is not None:  # d.parent: a picked parent unit counts
+            reparent(d, self.main.made.get(d.parent, d.parent))
         for kind, item_name, prop, mode, target in targets:
             item = getattr(d, kind).get(item_name)
             if item is not None:
@@ -300,14 +388,17 @@ def ensure_scene():
     return sc
 
 
+DRAFT_TYPES = ("objects", "materials", "meshes", "lights", "cameras", "worlds", "curves", "shape_keys")
+
+
 def purge():
-    """Remove every preview object and material; empty the preview collections."""
+    """Remove every preview object and runtime copy of data; empty the preview collections."""
     sc = preview_scene()
     for role in ("preview", "ghost"):
         c = preview_coll(sc, role)
         for ob in list(c.objects) if c is not None else ():
             c.objects.unlink(ob)
-    doomed = [i for coll in (bpy.data.objects, bpy.data.materials) for i in coll
+    doomed = [i for attr in DRAFT_TYPES for i in getattr(bpy.data, attr)
               if i.is_runtime_data and ses.is_draft(i)]
     if doomed:
         bpy.data.batch_remove(doomed)
@@ -318,10 +409,10 @@ def choice_fn(rows_choice, override=None):
         if override is not None and idx in override:
             return override[idx]
         if View.mode == "CURRENT":
-            return "CURRENT"
+            return ses.CURRENT
         if View.mode == "INCOMING":
-            return "INCOMING"
-        return rows_choice.get(idx, "CURRENT")
+            return ses.INCOMING
+        return rows_choice.get(idx, ses.CURRENT)
     return choice
 
 
@@ -337,8 +428,8 @@ def rebuild():
     sc = ensure_scene()
     vl = sc.view_layers[0]
     orig_vl = orig.view_layers[0]
-    main = Builder(preview_coll(sc, "preview"))
     planner = Planner(choice_fn(View.choices))
+    main = Builder(preview_coll(sc, "preview"), planner)
     main_slots = slots(planner, orig)
     shown = {}
     for key, plan, cur in main_slots:
@@ -349,10 +440,10 @@ def rebuild():
     ghost_objs = []
     idx = View.active
     if 0 <= idx < len(S.entries) and ses.choosable(S.entries[idx]) and (View.focus != "OFF" or View.solo):
-        flipped = "CURRENT" if choice_fn(View.choices)(idx) == "INCOMING" else "INCOMING"
+        flipped = ses.other_side(choice_fn(View.choices)(idx))
         alt_planner = Planner(choice_fn(View.choices, {idx: flipped}))
         alt = {key: plan for key, plan, _ in slots(alt_planner, orig)}
-        ghost = Builder(preview_coll(sc, "ghost"), ghost=True, main=main)
+        ghost = Builder(preview_coll(sc, "ghost"), alt_planner, ghost=True, main=main)
         for key, plan, cur in main_slots:
             if alt.get(key) != plan:
                 affected.append(key)
@@ -400,7 +491,7 @@ def rebuild():
     st = ses.scene_settings(orig)
     cam, world = orig.camera, orig.world
     sidx = S.index_cur.get(("SCENE", orig.name))
-    if sidx is not None and planner.side(sidx) == "INCOMING" and S.entries[sidx].status != diff.SAME:
+    if sidx is not None and planner.side(sidx) == ses.INCOMING and S.entries[sidx].status != diff.SAME:
         inc = S.incoming_scenes.get(S.entries[sidx].incoming)
         if inc:
             st = inc
@@ -409,7 +500,7 @@ def rebuild():
     sc.camera = main.make(planner.obj(planner.version(cam))) if cam is not None else None
     if View.solo and sc.camera is not None and sc.camera.name_full not in View.main_affected:
         set_hidden(sc.camera, True)  # the incoming scene's camera, added after Solo hid the rest
-    sc.world = planner.version(world)
+    sc.world = main.datablock(planner.version(world))
     apply_scene_settings(sc, st)
 
 

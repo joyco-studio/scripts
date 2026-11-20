@@ -6,6 +6,8 @@
 3. The chosen incoming objects / data-blocks are appended. Blender brings their dependencies too.
 4. Every appended data-block is reconciled with its row:
      chosen incoming  -> the current one is replaced everywhere (user_remap) and removed
+     mixed            -> the picked units are copied onto the current one (apply.copy_unit, the
+                         same functions the preview uses), then the appended copy is dropped
      only incoming    -> kept (a new object, or new data an incoming object needs)
      anything else    -> the appended duplicate is dropped and its users point at the current one
 5. Names are restored, new objects join the collections they are in in the incoming file, removals
@@ -19,6 +21,7 @@ The operator runs with UNDO, so Ctrl+Z takes the whole merge back.
 import bpy
 
 from . import diff, preview, snapshot
+from .apply import copy_units, taken_units
 from . import session as ses
 from .session import S
 
@@ -28,7 +31,7 @@ def plan(choices):
     bring, remove, scenes = [], [], []
     for idx, c in choices.items():
         e = S.entries[idx]
-        if c != "INCOMING" or not ses.choosable(e):
+        if ses.state(c) == ses.CURRENT or not ses.choosable(e):
             continue
         if e.cat == "SCENE":
             scenes.append(e)
@@ -64,12 +67,15 @@ def local(cat, name):
 
 
 def apply(choices, scene_name):
-    """Merge; returns a short report. `choices`: {entry index: "CURRENT" | "INCOMING"}."""
+    """Merge; returns a short report. `choices`: {entry index: pick} (see session.state)."""
     bring, remove, scene_entries = plan(choices)
     if not (bring or remove or scene_entries):
         return "Nothing to merge: every row is set to Current."
     path = S.path
-    chosen = {(e.cat, e.incoming) for e in bring}
+    # Mixed rows: the units to copy, worked out now (they read both files, which go away below).
+    mixed = {(S.entries[i].cat, S.entries[i].incoming): taken_units(i, c)
+             for i, c in choices.items() if ses.state(c) == ses.MIXED and ses.choosable(S.entries[i])}
+    chosen = {(e.cat, e.incoming) for e in bring} - set(mixed)
     member, inc_scenes = S.incoming_members, S.incoming_scenes
 
     preview.teardown()
@@ -81,7 +87,7 @@ def apply(choices, scene_name):
     global LAST_TOUCHED
     job = Job()
     try:
-        return run(job, path, names, bring, remove, scene_entries, chosen, member, inc_scenes, scene_name)
+        return run(job, path, names, bring, remove, scene_entries, chosen, mixed, member, inc_scenes, scene_name)
     except Exception:
         job.rollback()  # drop what was appended (rollback restores names too)
         raise
@@ -128,7 +134,7 @@ class Job:
             bpy.data.batch_remove(libs)
 
 
-def run(job, path, names, bring, remove, scene_entries, chosen, member, inc_scenes, scene_name):
+def run(job, path, names, bring, remove, scene_entries, chosen, mixed, member, inc_scenes, scene_name):
     renamed = job.renamed
     for attr in names:
         coll = getattr(bpy.data, attr, None)
@@ -167,7 +173,7 @@ def run(job, path, names, bring, remove, scene_entries, chosen, member, inc_scen
             return local(cat, e.incoming)
         return local(cat, e.current) or local(cat, e.incoming)
 
-    replaced, kept, dropped, skipped = [], [], [], []
+    replaced, kept, dropped, skipped, partial = [], [], [], [], []
     for n in new:
         cat = snapshot.ATTR_CAT.get(attr_of(n))
         idx = S.index_inc.get((cat, n.name)) if cat else None
@@ -192,6 +198,14 @@ def run(job, path, names, bring, remove, scene_entries, chosen, member, inc_scen
         else:
             n.user_remap(cur)
             dropped.append(n)
+            if (e.cat, e.incoming) in mixed:
+                partial.append((cur, n, e))
+
+    # Mixed rows. Every other appended data-block is reconciled by now, so what the appended copy
+    # points at (materials, parent, action...) is already what stays in the file: resolve is identity.
+    for cur, n, e in partial:
+        job.touched = True  # before copying: a copy that fails halfway has already edited real data
+        copy_units(e.cat, mixed[(e.cat, e.incoming)], cur, n, lambda i: i)
 
     doomed = [cur for cur, _n, _e in replaced] + dropped
     gone = {i.as_pointer() for i in doomed}
@@ -221,7 +235,9 @@ def run(job, path, names, bring, remove, scene_entries, chosen, member, inc_scen
                 parent.children.link(c)
         return c
     objects = [n for _c, n, e in replaced if e.cat == "OBJECT"] + \
-              [n for n in kept if isinstance(n, bpy.types.Object)]
+              [n for n in kept if isinstance(n, bpy.types.Object)] + \
+              [cur for cur, _n, e in partial if e.cat == "OBJECT" and
+               any(u.key == "collections" for u in mixed[(e.cat, e.incoming)])]
     for ob in objects:
         want = member.get(ob.name)
         if want is None:
@@ -296,8 +312,8 @@ def run(job, path, names, bring, remove, scene_entries, chosen, member, inc_scen
         bpy.data.batch_remove(libs)
 
     parts = []
-    if replaced:
-        parts.append(f"{len(replaced)} updated")
+    if replaced or partial:
+        parts.append(f"{len(replaced) + len(partial)} updated" + (f" ({len(partial)} partially)" if partial else ""))
     added = sum(1 for n in kept if alive(n) and isinstance(n, bpy.types.Object))
     if added:
         parts.append(f"{added} objects added")

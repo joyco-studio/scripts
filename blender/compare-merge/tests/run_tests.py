@@ -417,14 +417,264 @@ def test_operator_undo():
         compare_merge.unregister()
 
 
+UCUR = os.path.join(TMP, "units", "final.blend")
+UINC = os.path.join(TMP, "units", "artist.blend")
+
+
+def unit_keys(cat, name, locked=None):
+    from compare_merge import apply
+    return {u.key for u in apply.units(entry(cat, name)) if locked is None or bool(u.locked) == locked}
+
+
+def arrays(me):
+    """(positions, UVMap, Basis key) of a mesh as numpy arrays."""
+    import numpy as np
+    from compare_merge import snapshot
+    n, c = len(me.vertices), len(me.loops)
+    pos = snapshot.read(me.vertices, "co", n, 3)
+    uv = snapshot.read(me.uv_layers["UVMap"].data, "uv", c, 2)
+    basis = snapshot.read(me.shape_keys.reference_key.data, "co", n, 3) if me.shape_keys else None
+    return pos, uv, basis
+
+
+def close(a, b):
+    import numpy as np
+    return a is not None and b is not None and a.shape == b.shape and np.allclose(a, b, atol=1e-6)
+
+
+def test_units():
+    """Field-level picks: units, preview, normalisation, refresh."""
+    print("units")
+    bpy.ops.wm.open_mainfile(filepath=UCUR)
+    cur_pos, cur_uv, cur_basis = arrays(bpy.data.meshes["SplitMesh", None])
+    api.start(UINC)
+    inc_pos, inc_uv, _b = arrays(ses.get_incoming("MESH", "SplitMesh"))
+    check(not close(cur_pos, inc_pos) and not close(cur_uv, inc_uv), "fixture: positions and UVs differ")
+
+    keys = unit_keys("MESH", "SplitMesh", locked=False)
+    check({"positions", "uv:UVMap", "attr:Weight", "key:Key 1", "key:A"} <= keys, f"SplitMesh units ({sorted(keys)})")
+    check(not unit_keys("MESH", "SplitMesh", locked=True) - {"weights"}, "SplitMesh: nothing else locked")
+    from compare_merge import apply
+    sub = apply.units(entry("MESH", "SubdivMesh"))
+    check(sub and all(u.locked and "topology" in u.locked.lower() for u in sub),
+          f"SubdivMesh: every unit locked by topology ({[(u.key, u.locked) for u in sub]})")
+    check({"transform", "slot:1"} <= unit_keys("OBJECT", "Mover", locked=False), "Mover units")
+    pk = unit_keys("MATERIAL", "Painted", locked=False)
+    check(len([k for k in pk if "Roughness" in k]) == 1 and len([k for k in pk if "Base Color" in k]) == 1,
+          f"Painted: Roughness and Base Color pick separately ({sorted(pk)})")
+    check({"rna:energy", "rna:color"} <= unit_keys("LIGHT", "Bulb", locked=False), "Bulb units")
+    third = [u for u in apply.units(entry("MATERIAL", "Painted")) if u.key.startswith("node:Math › ")]
+    check(third and all(u.locked for u in third) and "node:Math · operation" in unit_keys("MATERIAL", "Painted", False),
+          f"an input only one side's node settings show is locked ({[(u.key, u.locked) for u in third]})")
+
+    # Preview: their UVs, our positions.
+    mi = entry("MESH", "SplitMesh")
+    api.set_unit(mi, "uv:UVMap", "INCOMING")
+    check(api.row_state(mi) == "MIXED" and api.takes(mi, "uv:UVMap") and not api.takes(mi, "positions"),
+          "row is Mixed and takes only the UVs")
+    preview.rebuild()
+    sc = preview.preview_scene()
+    vl = sc.view_layers[0]
+    shown = next(o for o in sc.objects if o.get("cm_src", o.name) == "SplitObj" and o.visible_get(view_layer=vl))
+    pos, uv, basis = arrays(shown.data)
+    check(shown.data.is_runtime_data and close(pos, cur_pos) and close(uv, inc_uv) and close(basis, cur_basis),
+          "preview: current positions, incoming UVs")
+    real = bpy.data.meshes["SplitMesh", None]
+    rp, ru, _rb = arrays(real)
+    check(close(rp, cur_pos) and close(ru, cur_uv), "preview leaves the real mesh untouched")
+    check(not real.is_runtime_data and shown.data != real, "preview shows a runtime copy")
+
+    # A mixed object: their transform, our slot material; their parent (and its offset), our location.
+    api.set_unit(entry("OBJECT", "Mover"), "transform", "INCOMING")
+    hi = entry("OBJECT", "Hanger")
+    check({"parent", "transform"} <= unit_keys("OBJECT", "Hanger", locked=False), "Hanger units")
+    api.set_unit(hi, "parent", "INCOMING")
+    preview.rebuild()
+    with bpy.context.temp_override(scene=sc, view_layer=vl):
+        bpy.context.evaluated_depsgraph_get().update()
+
+    def shown_ob(name):
+        return next(o for o in sc.objects if o.get("cm_src", o.name) == name and o.visible_get(view_layer=vl))
+    mover = shown_ob("Mover")
+    check(tuple(mover.location) == (0, 0, 3) and mover.material_slots[0].material.name == "MatA",
+          f"preview: Mover at the incoming location with the current slot material ({tuple(mover.location)})")
+    hanger = shown_ob("Hanger")
+    check(hanger.parent is not None and hanger.parent.name == "Hook2" and
+          (hanger.matrix_world.translation - Vector((1, 11, 6))).length < 1e-5,
+          f"preview: Hanger under Hook2 with its offset, at its own location ({tuple(hanger.matrix_world.translation)})")
+    check(bpy.data.objects["Hanger", None].parent.name == "Hook", "real Hanger untouched")
+
+    # Normalisation: every unit is Incoming, none is Current.
+    for k in keys:
+        api.set_unit(mi, k, "INCOMING")
+    check(View.choices[mi] == "INCOMING", "taking every unit reads as Incoming")
+    api.set_unit(mi, "positions", "CURRENT")
+    check(api.row_state(mi) == "MIXED" and not api.takes(mi, "positions"), "dropping one unit from Incoming mixes")
+    for k in keys:
+        api.set_unit(mi, k, "CURRENT")
+    check(View.choices[mi] == "CURRENT", "no unit taken reads as Current")
+    api.set_unit(mi, "uv:UVMap", "INCOMING")
+    api.set_choice(mi, "INCOMING")
+    check(View.choices[mi] == "INCOMING", "setting the row replaces its unit picks")
+    api.set_unit(mi, "uv:UVMap", "INCOMING")
+    api.set_unit(mi, "positions", "CURRENT")
+    sub_i = entry("MESH", "SubdivMesh")
+    api.set_unit(sub_i, sub[0].key, "INCOMING")
+    check(View.choices.get(sub_i, "CURRENT") == "CURRENT", "locked units can't be picked")
+
+    # Picks survive a refresh.
+    before = dict(View.choices)
+    api.refresh()
+    check(View.choices.get(entry("MESH", "SplitMesh")) == before[mi], "unit picks survive a refresh")
+
+    # Ghost compares the mix with the current file; mixed copies go away with the preview.
+    View.active, View.focus = entry("MESH", "SplitMesh"), "GHOST"
+    preview.rebuild()
+    check(View.ghost_objects, "ghost for a mixed row")
+    View.focus, View.active = "OFF", -1
+    for cat, name in (("MESH", "SplitMesh"), ("OBJECT", "Mover"), ("OBJECT", "Hanger")):
+        api.set_choice(entry(cat, name), "CURRENT")
+    preview.rebuild()
+    drafts = [i.name_full for i in ses.all_ids() if ses.is_draft(i) and not isinstance(i, (bpy.types.Scene, bpy.types.Collection))]
+    check(not drafts, f"no mixed copies left in the preview ({drafts})")
+    api.close()
+    check(not runtime_leftovers(), f"nothing left after closing ({runtime_leftovers()})")
+
+
+def test_units_merge():
+    print("units merge")
+    bpy.ops.wm.open_mainfile(filepath=UCUR)
+    real = bpy.data.meshes["SplitMesh", None]
+    cur_pos, cur_uv, cur_basis = arrays(real)
+    cur_painted = bpy.data.materials["Painted", None].node_tree.nodes["Principled BSDF"]
+    cur_color = tuple(cur_painted.inputs["Base Color"].default_value)
+    api.start(UINC)
+    inc_pos, inc_uv, inc_basis = arrays(ses.get_incoming("MESH", "SplitMesh"))
+    from compare_merge import apply
+    mi = entry("MESH", "SplitMesh")
+    api.set_unit(mi, "uv:UVMap", "INCOMING")
+    api.set_unit(mi, "attr:Weight", "INCOMING")
+    api.set_unit(mi, "key:Key 1", "INCOMING")
+    api.set_unit(mi, "key:A", "INCOMING")
+    api.set_unit(entry("OBJECT", "Mover"), "transform", "INCOMING")
+    rough = next(u.key for u in apply.units(entry("MATERIAL", "Painted")) if "Roughness" in u.key)
+    api.set_unit(entry("MATERIAL", "Painted"), rough, "INCOMING")
+    api.set_unit(entry("LIGHT", "Bulb"), "rna:energy", "INCOMING")
+    api.set_unit(entry("OBJECT", "Hanger"), "parent", "INCOMING")
+    report = api.merge()
+    print("  ", report)
+    check("partially" in report, "report counts partial merges")
+
+    me = bpy.data.meshes["SplitMesh", None]
+    pos, uv, basis = arrays(me)
+    check(me == real and bpy.data.objects["SplitObj", None].data == me, "SplitMesh keeps its name and its object")
+    check(close(pos, cur_pos) and close(uv, inc_uv) and close(basis, cur_basis),
+          "merge: current positions and Basis, incoming UVs")
+    check("Weight" in me.attributes and abs(me.attributes["Weight"].data[3].value - 0.3) < 1e-6, "attribute added")
+    kb = me.shape_keys.key_blocks
+    check("A" in kb and kb["Key 1"].relative_key == kb["A"],
+          f"picked key relative to another picked key added after it ({kb['Key 1'].relative_key.name})")
+    mover = bpy.data.objects["Mover", None]
+    check(tuple(mover.location) == (0, 0, 3) and mover.material_slots[0].material.name == "MatA",
+          "Mover: incoming location, current slot material")
+    hanger = bpy.data.objects["Hanger", None]
+    bpy.context.view_layer.update()
+    check(hanger.parent == bpy.data.objects["Hook2", None] and
+          (hanger.matrix_world.translation - Vector((1, 11, 6))).length < 1e-5,
+          f"Hanger: incoming parent and offset, current location ({tuple(hanger.matrix_world.translation)})")
+    bsdf = bpy.data.materials["Painted", None].node_tree.nodes["Principled BSDF"]
+    check(abs(bsdf.inputs["Roughness"].default_value - 0.9) < 1e-6 and
+          tuple(bsdf.inputs["Base Color"].default_value) == cur_color, "Painted: incoming roughness, current color")
+    bulb = bpy.data.lights["Bulb", None]
+    check(bulb.energy == 500 and tuple(bulb.color) == (1, 1, 1), "Bulb: incoming energy, current color")
+    names = [i.name for i in ses.all_ids() if i.library is None and not i.is_runtime_data]
+    check(not [n for n in names if n.endswith(".001") or n.startswith("cm~") or "(incoming)" in n],
+          f"no duplicate names ({[n for n in names if '.0' in n or 'cm~' in n]})")
+    check(status("MESH", "SplitMesh") == diff.CHANGED and changed_fields("MESH", "SplitMesh") and
+          not {"uv map UVMap", "attribute (point) Weight"} & set(changed_fields("MESH", "SplitMesh")),
+          f"only the kept fields still differ ({changed_fields('MESH', 'SplitMesh')})")
+    api.close()
+    out = os.path.join(TMP, "units_merged.blend")
+    bpy.ops.wm.save_as_mainfile(filepath=out, copy=True)
+    res = reopen_check(out, "import bpy, numpy as np; me = bpy.data.meshes['SplitMesh']; "
+                            "uv = np.empty(len(me.loops) * 2, dtype=np.float32); "
+                            "me.uv_layers['UVMap'].data.foreach_get('uv', uv); "
+                            "print('RESULT', sorted(m.name for m in bpy.data.meshes), "
+                            "round(float(uv.sum()), 4), round(me.vertices[8].co.z, 4), "
+                            "bpy.data.objects['Mover'].location.z)")
+    print("   reopened:", res)
+    want = (f"['MoverMesh', 'SplitMesh', 'SubdivMesh'] {round(float(inc_uv.sum()), 4)} "
+            f"{round(float(cur_pos.reshape(-1, 3)[8][2]), 4)} 3.0")
+    check(res == want, f"merged file reopens with the mix ({res} vs {want})")
+
+    # A copy that fails after editing real data: the merge says so (Ctrl+Z), not "nothing changed".
+    from compare_merge import merge
+    bpy.ops.wm.open_mainfile(filepath=UCUR)
+    api.start(UINC)
+    api.set_unit(entry("MESH", "SplitMesh"), "uv:UVMap", "INCOMING")
+    api.set_unit(entry("MESH", "SplitMesh"), "attr:Weight", "INCOMING")
+    real_copy, calls = apply.copy_unit, {"n": 0}
+
+    def flaky(*args):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("simulated failure after the first unit")
+        return real_copy(*args)
+    apply.copy_unit = flaky
+    try:
+        api.merge()
+        check(False, "merge should have raised")
+    except RuntimeError:
+        check(merge.LAST_TOUCHED, "a mixed copy that fails halfway counts as touched")
+    finally:
+        apply.copy_unit = real_copy
+    api.recover_after_failed_merge()
+    api.close()
+
+    # Vice versa: their positions, our UVs.
+    bpy.ops.wm.open_mainfile(filepath=UCUR)
+    api.start(UINC)
+    api.set_unit(entry("MESH", "SplitMesh"), "positions", "INCOMING")
+    api.merge()
+    pos, uv, basis = arrays(bpy.data.meshes["SplitMesh", None])
+    check(close(pos, inc_pos) and close(uv, cur_uv) and close(basis, inc_basis),
+          "merge: incoming positions and Basis, current UVs")
+    api.close()
+
+
+def test_units_undo():
+    """Unit picks come back after undoing a merge."""
+    print("units undo")
+    import compare_merge
+    compare_merge.register()
+    try:
+        bpy.ops.wm.open_mainfile(filepath=UCUR)
+        api.start(UINC)
+        mi = entry("MESH", "SplitMesh")
+        api.set_unit(mi, "uv:UVMap", "INCOMING")
+        picked = View.choices[mi]
+        bpy.ops.ed.undo_push(message="picked")
+        check(bpy.ops.compare_merge.merge("EXEC_DEFAULT") == {"FINISHED"}, "operator merged a mixed row")
+        bpy.ops.ed.undo_push(message="Merge")
+        bpy.ops.ed.undo()
+        compare_merge._after_undo()
+        check(View.choices.get(entry("MESH", "SplitMesh")) == picked, "undo brings the unit picks back")
+        api.close()
+    finally:
+        compare_merge.unregister()
+
+
 def main():
     fixtures.build("incoming", INC)
     fixtures.build("current", CUR)
     fixtures.build_review("incoming", RINC)
     fixtures.build_review("current", RCUR)
+    fixtures.build_units("incoming", UINC)
+    fixtures.build_units("current", UCUR)
     bpy.ops.wm.open_mainfile(filepath=CUR)
     for t in (test_diff, test_preview_is_safe, test_views, test_merge, test_close, test_review,
-              test_failed_merge_rolls_back, test_scene_rename, test_operator_undo):
+              test_failed_merge_rolls_back, test_scene_rename, test_operator_undo, test_units, test_units_merge,
+              test_units_undo):
         try:
             t()
         except Exception:

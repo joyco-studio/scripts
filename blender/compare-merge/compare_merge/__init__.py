@@ -7,10 +7,10 @@ The "Compare & Merge" workspace tab holds everything (3D View > Sidebar > Compar
 
 if "bpy" in locals():
     import importlib
-    for _m in (snapshot, diff, session, preview, merge, api, ui):  # noqa: F821
+    for _m in (snapshot, diff, session, apply, preview, merge, api, ui):  # noqa: F821
         importlib.reload(_m)
 else:
-    from . import snapshot, diff, session, preview, merge, api, ui
+    from . import snapshot, diff, session, apply, preview, merge, api, ui
 
 import time
 
