@@ -35,7 +35,7 @@ ln -s "$PWD/compare_merge" ~/Library/Application\ Support/Blender/5.3/extensions
    - **Ghost** overlays the other version as a wireframe.
    - **Blink** alternates between the two versions (rate adjustable).
    - **Solo** hides everything the row doesn't affect and frames it (each row you pick while Solo is on is framed too, like View Selected). Switching Show or the row's version keeps the view still so you see the change in place, and only re-frames when the version now shown is out of view; **Frame** zooms to it; **Flip** switches the row.
-5. **Merge into This File**. Ctrl+Z undoes the whole merge and brings your picks back.
+5. Check the **Merge** panel: everything the merge will do, grouped into Update, Rename, Add and Remove, with a count per type and what changed on each row (click one to select it in the list). Then **Merge into This File**. Ctrl+Z undoes the whole merge and brings your picks back.
 
 ## The preview never touches the file
 

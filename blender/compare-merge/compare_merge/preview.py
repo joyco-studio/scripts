@@ -233,9 +233,9 @@ class Builder:
                 d.animation_data_create()
             d.animation_data.action = action
         if parent is not None:
-            d.parent = self.nested(parent)
+            reparent(d, self.nested(parent))
         elif self.ghost and ob.parent is not None and self.main is not None:
-            d.parent = self.main.made.get(ob.parent, ob.parent)
+            reparent(d, self.main.made.get(ob.parent, ob.parent))
         for kind, item_name, prop, mode, target in targets:
             item = getattr(d, kind).get(item_name)
             if item is not None:
@@ -247,6 +247,15 @@ class Builder:
             d.show_in_front = View.focus == "GHOST"
             d.hide_select = True
         return d
+
+
+def reparent(ob, parent):
+    """Point `ob` at another version of its parent, keeping it where it sits under that parent.
+    Assigning Object.parent resets the parent inverse matrix, which moves every child that was
+    parented with an offset (Ctrl+P), so it is put back."""
+    mpi = ob.matrix_parent_inverse.copy()
+    ob.parent = parent
+    ob.matrix_parent_inverse = mpi
 
 
 # ---------------------------------------------------------------------------------------------- scene

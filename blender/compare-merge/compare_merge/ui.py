@@ -43,6 +43,7 @@ STATUS_FILTER = {diff.CHANGED: "show_changed", diff.RENAMED: "show_renamed", dif
 
 _syncing = False
 _from_viewport = False  # the row is being set from an object clicked in the viewport / outliner
+_reveal = None  # row index the list must show on its next draw (its own name filter is only reachable there)
 
 
 def props(context=None):
@@ -212,8 +213,13 @@ class CM_UL_rows(bpy.types.UIList):
             row.label(text="with its objects")
 
     def filter_items(self, context, data, propname):
+        global _reveal
         p = props(context)
         rows = getattr(data, propname)
+        if _reveal is not None and self.filter_name and 0 <= _reveal < len(rows) and not \
+                bpy.types.UI_UL_list.filter_items_by_name(self.filter_name, 1, [rows[_reveal]], "label")[0]:
+            self.filter_name = ""  # a row picked from the overview: the list's own name filter would hide it
+        _reveal = None
         flags = [self.bitflag_filter_item if row_visible(p, r) else 0 for r in rows]
         if self.filter_name:
             by_name = bpy.types.UI_UL_list.filter_items_by_name(self.filter_name, self.bitflag_filter_item, rows,
@@ -380,6 +386,33 @@ class CM_OT_flip(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class CM_OT_show_row(bpy.types.Operator):
+    bl_idname = "compare_merge.show_row"
+    bl_label = "Show Row"
+    bl_description = "Select this row in the list and what it affects in the preview"
+
+    index: IntProperty()
+
+    @classmethod
+    def poll(cls, _context):
+        return S.active
+
+    def execute(self, context):
+        p = props(context)
+        if not 0 <= self.index < len(p.rows):
+            return {"CANCELLED"}
+        row = p.rows[self.index]
+        if not row_matches(p, row):  # the list's filters would hide it: show it
+            p.search, p.category = "", "ALL"
+        setattr(p, STATUS_FILTER[row.status], True)
+        global _reveal
+        _reveal = self.index
+        p.active = self.index
+        for area in context.screen.areas if context.screen else ():
+            area.tag_redraw()
+        return {"FINISHED"}
+
+
 def row_objects(context, idx):
     """Preview-scene objects that show the given row."""
     sc = preview.preview_scene()
@@ -509,10 +542,11 @@ class CM_OT_merge(bpy.types.Operator):
         return S.active and any(c == "INCOMING" for c in View.choices.values())
 
     def invoke(self, context, event):
-        n = sum(1 for c in View.choices.values() if c == "INCOMING")
+        g = merge_overview()
         return context.window_manager.invoke_confirm(
             self, event, title="Merge into this file?", confirm_text="Merge",
-            message=f"{n} rows take the incoming version. You can undo with Ctrl+Z.")
+            message=f"{len(g[diff.CHANGED]) + len(g[diff.RENAMED])} to update, {len(g[diff.ONLY_INCOMING])} to add, "
+                    f"{len(g[diff.ONLY_CURRENT])} to remove. You can undo with Ctrl+Z.")
 
     def execute(self, context):
         # Never push undo steps from in here (a nested ed.undo_push corrupts the undo stack and the
@@ -688,17 +722,70 @@ class CM_PT_merge(CM_Panel, bpy.types.Panel):
     def draw(self, context):
         p = props(context)
         layout = self.layout
-        picked = [S.entries[i] for i, c in View.choices.items() if c == "INCOMING" and i < len(S.entries)
-                  and ses.choosable(S.entries[i])]
-        upd = sum(1 for e in picked if e.status in (diff.CHANGED, diff.RENAMED))
-        add = sum(1 for e in picked if e.status == diff.ONLY_INCOMING)
-        rem = sum(1 for e in picked if e.status == diff.ONLY_CURRENT)
-        layout.label(text=f"{upd} to update · {add} to add · {rem} to remove")
+        groups = merge_overview()
+        upd = len(groups[diff.CHANGED]) + len(groups[diff.RENAMED])
+        layout.label(text=f"{upd} to update · {len(groups[diff.ONLY_INCOMING])} to add · "
+                          f"{len(groups[diff.ONLY_CURRENT])} to remove")
+        if not upd and not groups[diff.ONLY_INCOMING] and not groups[diff.ONLY_CURRENT]:
+            layout.label(text="Set rows to Incoming / Add / Remove to merge them", icon="INFO")
+        for status, title in MERGE_GROUPS:
+            rows = groups[status]
+            if rows:
+                draw_merge_group(layout, status, title, rows)
         row = layout.row()
         row.scale_y = 1.5
         row.operator(CM_OT_merge.bl_idname, text="Merge into This File", icon="CHECKMARK")
         if p.message:
             layout.label(text=p.message, icon="INFO")
+
+
+MERGE_GROUPS = ((diff.CHANGED, "Update"), (diff.RENAMED, "Rename"), (diff.ONLY_INCOMING, "Add"),
+                (diff.ONLY_CURRENT, "Remove"))
+OVERVIEW_ROWS = 30  # rows listed per group; the type breakdown above them counts all of them
+
+
+def merge_overview():
+    """Rows Merge will act on, by kind of change: {status: [entry index]} (list order: type, then name)."""
+    groups = {status: [] for status, _t in MERGE_GROUPS}
+    for i in sorted(View.choices):
+        if View.choices[i] == "INCOMING" and i < len(S.entries) and ses.choosable(S.entries[i]):
+            groups[S.entries[i].status].append(i)
+    return groups
+
+
+def plural(cat, n):
+    label = snapshot.CAT_LABEL[cat].lower()
+    return f"{n} {label}" if n == 1 else f"{n} {label}{'es' if label.endswith('h') else 's'}"
+
+
+def change_summary(e, n=3):
+    """What differs in a changed row, by top-level field: "location, custom, Principled BSDF +2"."""
+    if e.status != diff.CHANGED:
+        return ""
+    fields = list(dict.fromkeys("bones" if f.startswith("bone ") else f.split(" › ")[0] for f, _a, _b in e.changes))
+    return ", ".join(fields[:n]) + (f" +{len(fields) - n}" if len(fields) > n else "")
+
+
+def draw_merge_group(layout, status, title, rows):
+    header, body = layout.panel(f"cm_merge_{status.lower()}", default_closed=False)
+    header.label(text=f"{title} ({len(rows)})", icon=STATUS_ICON[status])
+    if body is None:
+        return
+    by_cat = {}
+    for i in rows:
+        by_cat[S.entries[i].cat] = by_cat.get(S.entries[i].cat, 0) + 1
+    body.label(text=" · ".join(plural(c, k) for c, k in by_cat.items()))
+    col = body.column(align=True)
+    for i in rows[:OVERVIEW_ROWS]:
+        e = S.entries[i]
+        split = col.split(factor=0.55, align=True)
+        name = split.row()
+        name.alignment = "LEFT"  # buttons without emboss center their text
+        name.operator(CM_OT_show_row.bl_idname, text=e.name, icon=snapshot.CAT_ICON.get(e.cat, "DOT"),
+                      emboss=False).index = i
+        split.label(text=change_summary(e))
+    if len(rows) > OVERVIEW_ROWS:
+        col.label(text=f"… {len(rows) - OVERVIEW_ROWS} more in the list above")
 
 
 # ---------------------------------------------------------------------------------------------- menus, prefs
@@ -725,5 +812,5 @@ def prefs():
 
 
 classes = (CM_Row, CM_Props, CM_UL_rows, CM_OT_open_workspace, CM_OT_compare, CM_OT_refresh, CM_OT_close,
-           CM_OT_set_all, CM_OT_flip, CM_OT_frame, CM_OT_merge, CM_PT_compare, CM_PT_preview, CM_PT_changes,
-           CM_PT_details, CM_PT_merge, CM_Preferences)
+           CM_OT_set_all, CM_OT_flip, CM_OT_show_row, CM_OT_frame, CM_OT_merge, CM_PT_compare, CM_PT_preview,
+           CM_PT_changes, CM_PT_details, CM_PT_merge, CM_Preferences)
