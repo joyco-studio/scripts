@@ -28,6 +28,7 @@ class View:
     focus = "OFF"  # OFF | GHOST | BLINK
     solo = False
     active = -1  # selected row
+    row_pick = None  # object the selected row made active (not a click of the user's)
     blink_on = False
     main_affected = []  # names of preview-scene objects showing the selected row's chosen version
     ghost_objects = []  # names of objects showing the other version
@@ -397,6 +398,8 @@ def rebuild():
             cam = ses.get_incoming("OBJECT", inc["camera"])
             world = ses.get_incoming("WORLD", inc["world"])
     sc.camera = main.make(planner.obj(planner.version(cam))) if cam is not None else None
+    if View.solo and sc.camera is not None and sc.camera.name_full not in View.main_affected:
+        set_hidden(sc.camera, True)  # the incoming scene's camera, added after Solo hid the rest
     sc.world = planner.version(world)
     apply_scene_settings(sc, st)
 

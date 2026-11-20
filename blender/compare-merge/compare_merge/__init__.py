@@ -140,14 +140,17 @@ def _tick():
             preview.show_preview(win)
             ob = win.view_layer.objects.active if win.view_layer else None
             key = ob.name_full if ob else None
-            if key and key != _last["active"].get(win.as_pointer()):
+            if key == View.row_pick:
+                pass  # made active by selecting a row: keep that row
+            elif key and key != _last["active"].get(win.as_pointer()):
+                View.row_pick = None
                 src = ob.get("cm_src", ob.name)
                 side = session.S.index_inc if ob.library else session.S.index_cur
                 idx = side.get(("OBJECT", src))
                 if idx is None:
                     idx = session.S.index_cur.get(("OBJECT", src), session.S.index_inc.get(("OBJECT", src)))
                 if idx is not None and idx != p.active:
-                    p.active = idx
+                    ui.set_active_from_viewport(p, idx)
             _last["active"][win.as_pointer()] = key
         else:
             preview.show_original(win)
