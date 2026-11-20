@@ -43,6 +43,7 @@ STATUS_FILTER = {diff.CHANGED: "show_changed", diff.RENAMED: "show_renamed", dif
 
 _syncing = False
 _from_viewport = False  # the row is being set from an object clicked in the viewport / outliner
+_reveal = None  # row index the list must show on its next draw (its own name filter is only reachable there)
 
 
 def props(context=None):
@@ -212,8 +213,13 @@ class CM_UL_rows(bpy.types.UIList):
             row.label(text="with its objects")
 
     def filter_items(self, context, data, propname):
+        global _reveal
         p = props(context)
         rows = getattr(data, propname)
+        if _reveal is not None and self.filter_name and 0 <= _reveal < len(rows) and not \
+                bpy.types.UI_UL_list.filter_items_by_name(self.filter_name, 1, [rows[_reveal]], "label")[0]:
+            self.filter_name = ""  # a row picked from the overview: the list's own name filter would hide it
+        _reveal = None
         flags = [self.bitflag_filter_item if row_visible(p, r) else 0 for r in rows]
         if self.filter_name:
             by_name = bpy.types.UI_UL_list.filter_items_by_name(self.filter_name, self.bitflag_filter_item, rows,
@@ -399,7 +405,11 @@ class CM_OT_show_row(bpy.types.Operator):
         if not row_matches(p, row):  # the list's filters would hide it: show it
             p.search, p.category = "", "ALL"
         setattr(p, STATUS_FILTER[row.status], True)
+        global _reveal
+        _reveal = self.index
         p.active = self.index
+        for area in context.screen.areas if context.screen else ():
+            area.tag_redraw()
         return {"FINISHED"}
 
 
