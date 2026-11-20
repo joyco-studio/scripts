@@ -27,7 +27,7 @@ ln -s "$PWD/compare_merge" ~/Library/Application\ Support/Blender/5.3/extensions
    | − | only in this file | Keep / Remove |
 
    Click a row (or an object in the viewport) to see the changed fields side by side. Meshes also show how many vertices moved and by how much.
-3. Pick versions. The viewport always shows the **Merge Result**: what the file will look like with your picks. Picking Incoming on an object also picks its changed mesh, materials, images and animation, and new objects bring their new children (set any of them back by hand).
+3. Pick versions. The viewport always shows the **Merge Result**: what the file will look like with your picks. Picking Incoming on an object also picks its changed mesh, materials, images and animation; a new object brings its new children and the new objects it needs (parent, modifier targets), and a scene brings its new camera and world. Set any of them back by hand: a new object set to Skip stays out even if something else uses it.
 4. Look at the selected row's other version:
    - **Show: Current / Incoming** flips the whole scene between the two files.
    - **Ghost** overlays the other version as a wireframe.
@@ -60,7 +60,7 @@ Exit code: 0 identical, 1 error, 2 the files differ (like `git diff --exit-code`
 - Two-way diff: without a common ancestor the tool can't tell which side changed something, only that it differs. A three-way mode (pick a base file, auto-take one-sided changes, flag conflicts) is the natural next step.
 - Entities are matched by name; renames are detected only when the content is identical.
 - Data linked into either file from other libraries is not compared.
-- The preview swaps images inside materials, but not images inside node groups.
+- The preview swaps picked images and node groups inside materials and Geometry Nodes modifiers, but not images or groups nested inside other node groups.
 - Vertex weights are compared on meshes up to 100k vertices (no bulk API for them).
 
 ## Files

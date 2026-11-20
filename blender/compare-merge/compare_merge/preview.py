@@ -14,7 +14,7 @@ how Ghost / Blink / Solo find what to show for the selected row.
 
 import bpy
 
-from . import diff
+from . import diff, snapshot
 from . import session as ses
 from .session import S
 
@@ -64,16 +64,24 @@ class Planner:
         return ses.get_current(e.cat, e.current) or idb
 
     def material(self, m):
+        """Plan for a material: the chosen version, or a runtime copy whose image / node-group nodes
+        point at the chosen versions of those (picked independently of the material)."""
         t = self.version(m)
         swaps = []
         if t is not None and t.node_tree:
             for n in t.node_tree.nodes:
-                img = getattr(n, "image", None)
-                if img is not None:
-                    v = self.version(img)
-                    if v != img:
-                        swaps.append((n.name, v))
+                for attr in ("image", "node_tree"):
+                    ref = getattr(n, attr, None)
+                    if isinstance(ref, bpy.types.ID):
+                        v = self.version(ref)
+                        if v != ref:
+                            swaps.append((n.name, attr, v))
         return ("MA", t, tuple(swaps)) if swaps else t
+
+    def skipped(self, ob):
+        """A new object whose row says Skip (Merge won't bring it even if something uses it)."""
+        idx = ses.entry_of(ob)
+        return idx is not None and S.entries[idx].status == diff.ONLY_INCOMING and self.choice(idx) != "INCOMING"
 
     def obj(self, ob):
         """Plan for showing `ob` (already the chosen version): ob itself, or ("OB", ob, edits...)."""
@@ -103,9 +111,12 @@ class Planner:
             action = a if a != ob.animation_data.action else None
         parent = None
         if ob.parent:
-            pp = self.obj(self.version(ob.parent))
-            parent = pp if pp != ob.parent else None
-        targets = []
+            if self.skipped(ob.parent):
+                parent = "CLEAR"
+            else:
+                pp = self.obj(self.version(ob.parent))
+                parent = pp if pp != ob.parent else None
+        targets = []  # (modifiers | constraints, item name, property, "OBJ" plan | "ID" data-block | "NONE")
         for kind in ("modifiers", "constraints"):
             for item in getattr(ob, kind):
                 for p in item.bl_rna.properties:
@@ -113,9 +124,16 @@ class Planner:
                         continue
                     t = getattr(item, p.identifier, None)
                     if isinstance(t, bpy.types.Object) and t != ob:
+                        if self.skipped(t):
+                            targets.append((kind, item.name, p.identifier, "NONE", None))
+                            continue
                         tp = self.obj(self.version(t))
                         if tp != t:
-                            targets.append((kind, item.name, p.identifier, tp))
+                            targets.append((kind, item.name, p.identifier, "OBJ", tp))
+                    elif isinstance(t, bpy.types.NodeTree):  # Geometry Nodes modifiers
+                        v = self.version(t)
+                        if v != t:
+                            targets.append((kind, item.name, p.identifier, "ID", v))
         if new_data is None and not mats and action is None and parent is None and not targets:
             plan = ob
         else:
@@ -167,10 +185,10 @@ class Builder:
             _, m, swaps = plan
             d = ses.mark_draft(m.copy())
             d.name = f"{m.name} (preview)"
-            for node_name, img in swaps:
+            for node_name, attr, value in swaps:
                 node = d.node_tree.nodes.get(node_name)
                 if node is not None:
-                    node.image = img
+                    setattr(node, attr, value)
             self.mats[plan] = d
         return self.mats[plan]
 
@@ -210,14 +228,18 @@ class Builder:
             if d.animation_data is None:
                 d.animation_data_create()
             d.animation_data.action = action
-        if parent is not None:
+        if parent == "CLEAR":  # its new parent is skipped: it stays where it is in the world
+            mw = snapshot.world_matrix(ob)
+            d.parent = None
+            d.matrix_world = mw
+        elif parent is not None:
             d.parent = self.nested(parent)
         elif self.ghost and ob.parent is not None and self.main is not None:
             d.parent = self.main.made.get(ob.parent, ob.parent)
-        for kind, item_name, prop, target in targets:
+        for kind, item_name, prop, mode, target in targets:
             item = getattr(d, kind).get(item_name)
             if item is not None:
-                setattr(item, prop, self.nested(target))
+                setattr(item, prop, self.nested(target) if mode == "OBJ" else target)
         for axis in ("lock_location", "lock_rotation", "lock_scale"):
             setattr(d, axis, (True, True, True))
         if self.ghost:
@@ -230,8 +252,16 @@ class Builder:
 # ---------------------------------------------------------------------------------------------- scene
 
 def preview_scene():
-    sc = bpy.data.scenes.get(ses.PREVIEW_SCENE)
-    return sc if sc is not None and sc.is_runtime_data else None
+    """Found by its tag, not its name: a scene of the user's may already be called that."""
+    return next((s for s in bpy.data.scenes if s.library is None and s.is_runtime_data and ses.is_draft(s)), None)
+
+
+def preview_coll(sc, role):
+    """The preview's own collections, by tag. The preview scene also shows the real scene's collections,
+    so a user collection with the same name must never be picked up (purge empties these)."""
+    if sc is None:
+        return None
+    return next((c for c in sc.collection.children if c.is_runtime_data and c.get(ses.DRAFT_TAG) == role), None)
 
 
 def original_scene():
@@ -246,10 +276,10 @@ def ensure_scene():
     if sc is None:
         sc = ses.mark_draft(orig.copy())
         sc.name = ses.PREVIEW_SCENE
-    for name in (PREVIEW_COLL, GHOST_COLL):
-        c = sc.collection.children.get(name)
-        if c is None:
+    for name, role in ((PREVIEW_COLL, "preview"), (GHOST_COLL, "ghost")):
+        if preview_coll(sc, role) is None:
             c = ses.mark_draft(bpy.data.collections.new(name))
+            c[ses.DRAFT_TAG] = role
             sc.collection.children.link(c)
     return sc
 
@@ -257,8 +287,8 @@ def ensure_scene():
 def purge():
     """Remove every preview object and material; empty the preview collections."""
     sc = preview_scene()
-    for name in (PREVIEW_COLL, GHOST_COLL):
-        c = sc.collection.children.get(name) if sc is not None else None
+    for role in ("preview", "ghost"):
+        c = preview_coll(sc, role)
         for ob in list(c.objects) if c is not None else ():
             c.objects.unlink(ob)
     doomed = [i for coll in (bpy.data.objects, bpy.data.materials) for i in coll
@@ -291,7 +321,7 @@ def rebuild():
     sc = ensure_scene()
     vl = sc.view_layers[0]
     orig_vl = orig.view_layers[0]
-    main = Builder(sc.collection.children[PREVIEW_COLL])
+    main = Builder(preview_coll(sc, "preview"))
     planner = Planner(choice_fn(View.choices))
     main_slots = slots(planner, orig)
     shown = {}
@@ -306,7 +336,7 @@ def rebuild():
         flipped = "CURRENT" if choice_fn(View.choices)(idx) == "INCOMING" else "INCOMING"
         alt_planner = Planner(choice_fn(View.choices, {idx: flipped}))
         alt = {key: plan for key, plan, _ in slots(alt_planner, orig)}
-        ghost = Builder(sc.collection.children[GHOST_COLL], ghost=True, main=main)
+        ghost = Builder(preview_coll(sc, "ghost"), ghost=True, main=main)
         for key, plan, cur in main_slots:
             if alt.get(key) != plan:
                 affected.append(key)
@@ -351,20 +381,28 @@ def rebuild():
             set_hidden(o, True)
 
     # Scene settings: the chosen scene's camera, world and frame range.
-    r = orig.render
-    st = dict(camera=orig.camera, world=orig.world, frame_start=orig.frame_start, frame_end=orig.frame_end,
-              fps=r.fps, fps_base=r.fps_base)
+    st = ses.scene_settings(orig)
+    cam, world = orig.camera, orig.world
     sidx = S.index_cur.get(("SCENE", orig.name))
     if sidx is not None and planner.side(sidx) == "INCOMING" and S.entries[sidx].status != diff.SAME:
         inc = S.incoming_scenes.get(S.entries[sidx].incoming)
         if inc:
-            st = dict(inc, camera=ses.get_incoming("OBJECT", inc["camera"]),
-                      world=ses.get_incoming("WORLD", inc["world"]))
-    cam = st["camera"]
+            st = inc
+            cam = ses.get_incoming("OBJECT", inc["camera"])
+            world = ses.get_incoming("WORLD", inc["world"])
     sc.camera = main.make(planner.obj(planner.version(cam))) if cam is not None else None
-    sc.world = planner.version(st["world"])
+    sc.world = planner.version(world)
+    apply_scene_settings(sc, st)
+
+
+def apply_scene_settings(sc, st):
+    """Frame range, fps, resolution and units (camera and world are resolved by the caller)."""
+    r = sc.render
     sc.frame_start, sc.frame_end = st["frame_start"], st["frame_end"]
-    sc.render.fps, sc.render.fps_base = st["fps"], st["fps_base"]
+    r.fps, r.fps_base = st["fps"], st["fps_base"]
+    r.resolution_x, r.resolution_y = st["resolution_x"], st["resolution_y"]
+    r.resolution_percentage = st["resolution_percentage"]
+    sc.unit_settings.scale_length = st["scale_length"]
 
 
 def blink_tick():

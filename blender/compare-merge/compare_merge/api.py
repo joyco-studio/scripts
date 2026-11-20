@@ -13,6 +13,7 @@ def start(path, scene_name=None):
     scene_name = scene_name or bpy.context.scene.name
     if S.active:
         preview.teardown()
+    _before_merge.clear()
     ses.compare(path, scene_name)
     View.choices = {}
     View.active = -1
@@ -29,8 +30,8 @@ def refresh(after_undo=False):
     """Diff again after the current file changed; choices stay with their rows."""
     keep = keyed_choices()
     if after_undo and not keep and _before_merge:
-        keep = dict(_before_merge)  # the merge was undone: its picks come back
-    _before_merge.clear()
+        keep = dict(_before_merge)  # the merge was undone: its picks come back (kept until the next
+        # merge or the end of the comparison, so a Refresh in between doesn't lose them)
     ses.ensure_linked()
     ses.refresh_current()
     View.choices = {i: keep[(e.cat, e.current, e.incoming)] for i, e in enumerate(S.entries)
@@ -48,11 +49,39 @@ def set_choice(idx, choice, cascade=True):
         for d in ses.dependents(e):
             View.choices[d] = choice
             touched.append(d)
+        if e.cat == "SCENE":  # the scene's camera when it is new: shown as picked, merged with the scene
+            cam = (S.incoming_scenes.get(e.incoming) or {}).get("camera")
+            dep = S.index_inc.get(("OBJECT", cam))
+            if dep is not None and S.entries[dep].status == diff.ONLY_INCOMING:
+                View.choices[dep] = choice
+                touched.append(dep)
         if e.cat == "OBJECT" and e.status == diff.ONLY_INCOMING:
-            for c in incoming_children(e.incoming):
+            # Skipping a new object skips its new children; adding one also adds the new objects it
+            # needs (parents, modifier / constraint targets), which Blender would append anyway.
+            linked = incoming_children(e.incoming) + (incoming_needs(e.incoming) if choice == "INCOMING" else [])
+            for c in linked:
                 View.choices[c] = choice
                 touched.append(c)
     return touched
+
+
+def incoming_needs(name, seen=None):
+    """New (only incoming) objects an incoming object depends on, recursively."""
+    seen = set() if seen is None else seen
+    ob = ses.get_incoming("OBJECT", name)
+    out = []
+    if ob is None:
+        return out
+    deps = [ob.parent] + [getattr(item, p.identifier, None) for kind in (ob.modifiers, ob.constraints)
+                          for item in kind for p in item.bl_rna.properties if p.type == "POINTER"]
+    for dep in deps:
+        if not isinstance(dep, bpy.types.Object) or dep.name in seen:
+            continue
+        seen.add(dep.name)
+        idx = S.index_inc.get(("OBJECT", dep.name))
+        if idx is not None and S.entries[idx].status == diff.ONLY_INCOMING:
+            out += [idx] + incoming_needs(dep.name, seen)
+    return out
 
 
 def incoming_children(name):
@@ -80,6 +109,7 @@ def merge():
 
 
 def close():
+    _before_merge.clear()
     preview.teardown()
     ses.unlink()
     ses.reset()

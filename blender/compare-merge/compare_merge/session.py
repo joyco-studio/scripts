@@ -31,6 +31,7 @@ class State:
         self.index_inc = {}  # (cat, incoming name) -> entry index
         self.incoming_scenes = {}  # scene name -> settings (linked scenes can't stay linked, see link())
         self.incoming_members = {}  # object name -> [(in a scene's top level, collection name)]
+        self.incoming_colls = {}  # collection name -> parents and settings (to rebuild new nested collections)
 
     @property
     def active(self):
@@ -41,8 +42,8 @@ S = State()
 
 
 def reset():
-    global S
-    S = State()
+    """Clear the comparison in place: other modules hold this object (`from .session import S`)."""
+    S.__init__()
 
 
 # ---------------------------------------------------------------------------------------------- ID helpers
@@ -169,6 +170,15 @@ def unlink():
         S.lib_filepath = ""
 
 
+def scene_settings(s):
+    """The scene settings Compare & Merge diffs, previews and merges (snapshot.snap_scene shows them)."""
+    r = s.render
+    return dict(camera=s.camera.name if s.camera else None, world=s.world.name if s.world else None,
+                frame_start=s.frame_start, frame_end=s.frame_end, fps=r.fps, fps_base=r.fps_base,
+                resolution_x=r.resolution_x, resolution_y=r.resolution_y,
+                resolution_percentage=r.resolution_percentage, scale_length=s.unit_settings.scale_length)
+
+
 def drop_linked_scenes():
     """Read what the merge and the preview need from the incoming scenes, then unlink them."""
     lib = library()
@@ -177,12 +187,15 @@ def drop_linked_scenes():
     S.incoming_members = {
         ob.name: [(c.as_pointer() in masters, c.name) for c in ob.users_collection]
         for ob in bpy.data.objects if ob.library == lib}
-    S.incoming_scenes = {
-        s.name: dict(camera=s.camera.name if s.camera else None, world=s.world.name if s.world else None,
-                     frame_start=s.frame_start, frame_end=s.frame_end, fps=s.render.fps,
-                     fps_base=s.render.fps_base, resolution_x=s.render.resolution_x,
-                     resolution_y=s.render.resolution_y)
-        for s in scenes}
+    S.incoming_scenes = {s.name: scene_settings(s) for s in scenes}
+    colls = [c for c in bpy.data.collections if c.library == lib]
+    S.incoming_colls = {c.name: dict(parents=[], hide_render=c.hide_render, hide_viewport=c.hide_viewport,
+                                     instance_offset=tuple(c.instance_offset)) for c in colls}
+    for parent in colls + [s.collection for s in scenes]:
+        for child in parent.children:
+            if child.name in S.incoming_colls:
+                S.incoming_colls[child.name]["parents"].append(
+                    (parent.as_pointer() in masters, "" if parent.as_pointer() in masters else parent.name))
     if scenes:
         bpy.data.batch_remove(scenes)
 

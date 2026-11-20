@@ -7,6 +7,7 @@ import tempfile
 import traceback
 
 import bpy
+from mathutils import Vector
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
@@ -197,11 +198,90 @@ def test_close():
     check(res == "0 ['Boulder', 'Camera', 'Child', 'Cone', 'ConeTip', 'Cube', 'Rock0']", f"merged file reopens clean ({res})")
 
 
+RCUR = os.path.join(TMP, "review", "final.blend")
+RINC = os.path.join(TMP, "review", "artist.blend")
+
+
+def changed_fields(cat, name):
+    i = entry(cat, name)
+    return [f for f, _a, _b in ses.S.entries[i].changes] if i is not None else []
+
+
+def test_review():
+    """Regression tests for the code-review findings on the first version."""
+    print("review findings")
+    bpy.ops.wm.open_mainfile(filepath=RCUR)
+    api.start(RINC)
+    check(status("LIGHT", "Lamp") == diff.CHANGED and "color" in changed_fields("LIGHT", "Lamp"), "light color change")
+    check(status("MESH", "SkinMesh") == diff.CHANGED and "vertex weights" in changed_fields("MESH", "SkinMesh"),
+          "weight moved to another vertex")
+    check(status("CURVE", "Path") == diff.CHANGED, "curve handle moved")
+    check(status("ACTION", "WigglerAction") == diff.CHANGED, "F-curve modifier settings")
+    check(status("MATERIAL", "Mathy") == diff.CHANGED, "swapped links into same-named sockets")
+    check(status("NODETREE", "Tint") == diff.CHANGED and status("MATERIAL", "Tinted") == diff.SAME, "node group change")
+    check(status("SCENE", "Scene") == diff.CHANGED and
+          {"resolution", "unit scale", "camera", "world"} <= set(changed_fields("SCENE", "Scene")), "scene fields")
+
+    # Close + compare again: every module must see the new comparison (reset clears in place).
+    api.close()
+    api.start(RINC)
+    check(preview.S is ses.S and preview.preview_scene() is not None and ses.S.entries, "compare again after close")
+
+    user = bpy.data.collections["Compare Preview", None]
+    check(not user.is_runtime_data and "UserThing" in user.objects, "user collection named like the preview")
+
+    # Node group picked on its own: the preview shows it through a runtime copy of the material.
+    api.set_choice(entry("NODETREE", "Tint"), "INCOMING")
+    preview.rebuild()
+    sc = preview.preview_scene()
+    vl = sc.view_layers[0]
+    ball = next(o for o in sc.objects if o.name.startswith("TintBall") and o.visible_get(view_layer=vl))
+    grp = ball.material_slots[0].material.node_tree.nodes["Group"]
+    check(ball.material_slots[0].material.is_runtime_data and grp.node_tree.library is not None,
+          "preview shows the picked node group")
+
+    # A new child needs its new parent; Skip on the parent is honoured by preview and merge alike.
+    child_i, parent_i = entry("OBJECT", "NewChild"), entry("OBJECT", "NewParent")
+    api.set_choice(child_i, "INCOMING")
+    check(View.choices.get(parent_i) == "INCOMING", "adding a new child adds its new parent")
+    View.choices[parent_i] = "CURRENT"
+    preview.rebuild()
+    shown = next(o for o in sc.objects if o.get("cm_src") == "NewChild")
+    check(shown.parent is None and (shown.matrix_world.translation - Vector((5, 0, 1))).length < 1e-5,
+          "preview: skipped parent, child stays in place")
+
+    api.set_choice(entry("OBJECT", "Nested"), "INCOMING")
+    api.set_choice(entry("SCENE", "Scene"), "INCOMING")
+    print("  ", api.merge())
+
+    check("UserThing" in bpy.data.collections["Compare Preview", None].objects, "user collection untouched by the preview")
+    child = bpy.data.objects.get(("NewChild", None))
+    check(child is not None and child.parent is None and (child.matrix_world.translation - Vector((5, 0, 1))).length < 1e-5,
+          "merge: child added, skipped parent left out, world position kept")
+    check(bpy.data.objects.get(("NewParent", None)) is None, "merge: skipped parent not added")
+    outer, inner = bpy.data.collections.get(("Outer", None)), bpy.data.collections.get(("Inner", None))
+    check(outer is not None and inner is not None and inner.name in outer.children and outer.name in
+          bpy.context.scene.collection.children and inner.hide_render, "new nested collections keep their tree")
+    scene = bpy.context.scene
+    check(scene.camera is not None and scene.camera.name == "Cam2", f"scene merge brings its new camera ({scene.camera})")
+    check(scene.world is not None and scene.world.name == "Sky", "scene merge brings its new world")
+    check(scene.render.resolution_percentage == 50 and abs(scene.unit_settings.scale_length - 0.01) < 1e-9,
+          "scene merge applies resolution % and unit scale")
+    check(status("SCENE", "Scene") == diff.SAME, "scene identical after merge")
+
+    check(bool(api._before_merge), "picks saved for undo")
+    api.refresh()
+    check(bool(api._before_merge), "a Refresh keeps the picks an undo would bring back")
+    api.close()
+
+
 def main():
     fixtures.build("incoming", INC)
     fixtures.build("current", CUR)
+    fixtures.build_review("incoming", RINC)
+    fixtures.build_review("current", RCUR)
     bpy.ops.wm.open_mainfile(filepath=CUR)
-    for t in (test_diff, test_preview_is_safe, test_views, test_merge, test_close):
+    for t in (test_diff, test_preview_is_safe, test_views, test_merge, test_close, test_review):
         try:
             t()
         except Exception:

@@ -91,3 +91,100 @@ def build(variant, path):
     cube.keyframe_insert("location", frame=20)
     cube.location.z -= 1
     bpy.ops.wm.save_as_mainfile(filepath=path)
+
+
+def build_review(variant, path):
+    """One pair of files with a case for every code-review finding (see run_tests.test_review)."""
+    inc = variant == "incoming"
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    sc = bpy.context.scene
+    link = sc.collection.objects.link
+
+    # A user collection that happens to share the preview's collection name.
+    user = bpy.data.collections.new("Compare Preview")
+    sc.collection.children.link(user)
+    user.objects.link(bpy.data.objects.new("UserThing", None))
+
+    light = bpy.data.lights.new("Lamp", "POINT")
+    light.color = (1, 0.5, 0.2) if inc else (1, 1, 1)
+    link(bpy.data.objects.new("LampObj", light))
+
+    skin = cube_mesh("SkinMesh")
+    skin_ob = bpy.data.objects.new("SkinObj", skin)
+    link(skin_ob)
+    g = skin_ob.vertex_groups.new(name="G")
+    g.add([1 if inc else 0], 1.0, "REPLACE")
+
+    cu = bpy.data.curves.new("Path", "CURVE")
+    sp = cu.splines.new("BEZIER")
+    sp.bezier_points.add(1)
+    sp.bezier_points[1].co = (2, 0, 0)
+    sp.bezier_points[0].handle_left = (-1, 1 if inc else 0, 0)
+    link(bpy.data.objects.new("PathObj", cu))
+
+    wig = bpy.data.objects.new("Wiggler", None)
+    link(wig)
+    wig.keyframe_insert("location", frame=1, index=0)
+    wig.location.x = 1
+    wig.keyframe_insert("location", frame=10, index=0)
+    from compare_merge.snapshot import iter_fcurves
+    fc = next(fc for _slot, fc in iter_fcurves(wig.animation_data.action))
+    fc.modifiers.new("NOISE").strength = 2.0 if inc else 1.0
+
+    mathy = bpy.data.materials.new("Mathy")
+    mathy.use_fake_user = True
+    nt = mathy.node_tree
+    a, b = nt.nodes.new("ShaderNodeValue"), nt.nodes.new("ShaderNodeValue")
+    a.name, b.name = "A", "B"
+    a.outputs[0].default_value, b.outputs[0].default_value = 1, 2
+    m = nt.nodes.new("ShaderNodeMath")
+    m.name, m.operation = "Sub", "SUBTRACT"
+    first, second = (b, a) if inc else (a, b)
+    nt.links.new(first.outputs[0], m.inputs[0])
+    nt.links.new(second.outputs[0], m.inputs[1])
+
+    tint = bpy.data.node_groups.new("Tint", "ShaderNodeTree")
+    tint.interface.new_socket("Color", in_out="OUTPUT", socket_type="NodeSocketColor")
+    out = tint.nodes.new("NodeGroupOutput")
+    rgb = tint.nodes.new("ShaderNodeRGB")
+    rgb.outputs[0].default_value = (0, 0, 1, 1) if inc else (1, 0, 0, 1)
+    tint.links.new(rgb.outputs[0], out.inputs[0])
+    tinted = bpy.data.materials.new("Tinted")
+    grp = tinted.node_tree.nodes.new("ShaderNodeGroup")
+    grp.name = "Group"
+    grp.node_tree = tint
+    bsdf = next(n for n in tinted.node_tree.nodes if n.type == "BSDF_PRINCIPLED")
+    tinted.node_tree.links.new(grp.outputs[0], bsdf.inputs["Base Color"])
+    ball = cube_mesh("BallMesh")
+    ball.materials.append(tinted)
+    link(bpy.data.objects.new("TintBall", ball))
+
+    cam1 = bpy.data.objects.new("Cam1", bpy.data.cameras.new("Cam1Data"))
+    link(cam1)
+    sc.camera = cam1
+    sc.world = bpy.data.worlds.new("WorldA")
+    sc.render.resolution_percentage = 50 if inc else 100
+    sc.unit_settings.scale_length = 0.01 if inc else 1.0
+    if inc:
+        cam2 = bpy.data.objects.new("Cam2", bpy.data.cameras.new("Cam2Data"))
+        link(cam2)
+        sc.camera = cam2
+        sc.world = bpy.data.worlds.new("Sky")
+
+        parent = bpy.data.objects.new("NewParent", None)
+        parent.location = (5, 0, 0)
+        link(parent)
+        child = bpy.data.objects.new("NewChild", None)
+        child.parent = parent
+        child.location = (0, 0, 1)
+        link(child)
+
+        outer = bpy.data.collections.new("Outer")
+        sc.collection.children.link(outer)
+        inner = bpy.data.collections.new("Inner")
+        outer.children.link(inner)
+        inner.hide_render = True
+        inner.objects.link(bpy.data.objects.new("Nested", None))
+    bpy.context.view_layer.update()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    bpy.ops.wm.save_as_mainfile(filepath=path)

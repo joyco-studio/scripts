@@ -41,12 +41,13 @@ SKIP = {
     "rna_type", "name", "name_full", "id_data", "use_fake_user", "use_extra_user", "is_runtime_data", "tag",
     "asset_data", "original", "library", "library_weak_reference", "override_library", "preview", "users",
     "session_uid", "is_evaluated", "is_embedded_data", "is_missing", "is_editable", "is_library_indirect",
-    "id_type", "is_linked_packed", "deep_hash", "location", "location_absolute", "width", "height", "select",
-    "hide", "color", "use_custom_color", "label", "parent", "warning_propagation", "dimensions", "bl_idname",
-    "bl_label", "bl_description", "bl_icon", "preview_render_type", "use_preview_world", "pass_index",
-    "line_color", "line_priority", "is_dirty", "is_float", "has_data", "bindcode", "filepath_raw", "users_collection",
-    "inputs", "outputs", "internal_links", "angle", "angle_x", "angle_y",  # sockets read separately; lens-derived
+    "id_type", "is_linked_packed", "deep_hash", "bl_idname", "bl_label", "bl_description", "bl_icon",
+    "preview_render_type", "use_preview_world", "pass_index", "line_color", "line_priority", "is_dirty",
+    "is_float", "has_data", "bindcode", "filepath_raw", "users_collection",
 }
+# Node editor layout (where a node sits, how it looks); sockets and links are read separately.
+NODE_SKIP = SKIP | {"location", "location_absolute", "width", "height", "select", "hide", "color", "use_custom_color",
+                    "label", "parent", "warning_propagation", "dimensions", "inputs", "outputs", "internal_links"}
 SKIP_PREFIX = ("bl_", "show_", "active_", "paint_", "lock_", "is_", "use_pin", "cycles", "texel_coverage",
                "compare_merge")
 
@@ -112,11 +113,11 @@ def read(coll, key, n, comps=1, dtype=np.float32):
 
 # ---------------------------------------------------------------------------------------------- generic RNA
 
-def rna_fields(struct, prefix, out, depth=0):
+def rna_fields(struct, prefix, out, depth=0, skip=SKIP):
     """Every editable property of `struct`; owned sub-structs recurse, nested collections hash."""
     for p in struct.bl_rna.properties:
         ident = p.identifier
-        if ident in SKIP or ident.startswith(SKIP_PREFIX) or getattr(p, "is_runtime", False):
+        if ident in skip or ident.startswith(SKIP_PREFIX) or getattr(p, "is_runtime", False):
             continue
         try:
             v = getattr(struct, ident)
@@ -127,7 +128,7 @@ def rna_fields(struct, prefix, out, depth=0):
             if isinstance(v, bpy.types.ID) or (v is None and not p.is_readonly):
                 out[key] = fmt(v)
             elif v is not None and p.is_readonly and depth < 2:
-                rna_fields(v, key + ".", out, depth + 1)
+                rna_fields(v, key + ".", out, depth + 1, skip)
             elif v is not None and hasattr(v, "name"):
                 out[key] = str(v.name)
         elif p.type == "COLLECTION":
@@ -135,7 +136,7 @@ def rna_fields(struct, prefix, out, depth=0):
                 items = []
                 for item in v:
                     sub = {}
-                    rna_fields(item, "", sub, depth + 1)
+                    rna_fields(item, "", sub, depth + 1, skip)
                     items.append(sorted(sub.items()))
                 out[key] = f"{len(items)} items {digest(items)}"
         elif not p.is_readonly:
@@ -158,7 +159,7 @@ def node_tree_fields(nt, out, prefix=""):
         out[f"{n} · type"] = node.bl_idname
         if node.mute:
             out[f"{n} · muted"] = "on"
-        rna_fields(node, f"{n} · ", out, depth=1)
+        rna_fields(node, f"{n} · ", out, depth=1, skip=NODE_SKIP)
         seen = {}
         for sock in node.inputs:
             if sock.is_linked or not hasattr(sock, "default_value") or not sock.enabled:
@@ -168,10 +169,16 @@ def node_tree_fields(nt, out, prefix=""):
             if seen[label] > 1:
                 label = f"{label} {seen[label]}"
             out[f"{n} › {label}"] = fmt(sock.default_value)
+        if node.type in ("RGB", "VALUE"):  # these keep their value on the output socket
+            out[f"{n} › value"] = fmt(node.outputs[0].default_value)
     for link in nt.links:
         if link.is_muted:
             continue
-        out[f"{prefix}link {link.from_node.name}.{link.from_socket.name} → {link.to_node.name}.{link.to_socket.name}"] = "linked"
+        # Socket identifiers, not names: a Math node has two inputs called "Value".
+        to = f"{link.to_node.name}.{link.to_socket.identifier}"
+        if link.to_socket.is_multi_input:  # order matters (Join Geometry, ...)
+            to += f" #{getattr(link, 'multi_input_sort_id', 0)}"
+        out[f"{prefix}link {link.from_node.name}.{link.from_socket.identifier} → {to}"] = "linked"
     if hasattr(nt, "interface"):
         for item in nt.interface.items_tree:
             if item.item_type == "SOCKET":
@@ -269,7 +276,7 @@ def snap_mesh(me):
             f[f"shape key {kb.name}"] = f"{digest(read(kb.data, 'co', len(kb.data), 3))} value {fnum(kb.value)} " \
                                          f"relative to {kb.relative_key.name}"
     if len(me.vertices) <= 100_000:  # no bulk API for deform weights; skip the Python loop on huge meshes
-        weights = [(g.group, round(g.weight, 5)) for v in me.vertices for g in v.groups]
+        weights = [(v.index, g.group, round(g.weight, 5)) for v in me.vertices for g in v.groups]
         if weights:
             f["vertex weights"] = digest(weights)
     else:
@@ -341,8 +348,13 @@ def snap_action(act):
     for slot, fc in iter_fcurves(act):
         kp = fc.keyframe_points
         n = len(kp)
+        mods = []
+        for m in fc.modifiers:  # Noise, Cycles, ...: their settings change the motion too
+            sub = {}
+            rna_fields(m, "", sub, depth=1)
+            mods.append((m.type, sorted(sub.items())))
         h = digest(read(kp, "co", n, 2), read(kp, "handle_left", n, 2), read(kp, "handle_right", n, 2),
-                   [k.interpolation for k in kp], [m.type for m in fc.modifiers])
+                   [(k.interpolation, k.easing) for k in kp], fc.extrapolation, mods)
         f[f"curve {slot + ' ' if slot else ''}{fc.data_path}[{fc.array_index}]"] = f"{n} keys {h}"
     custom_props(act, f)
     return f
@@ -360,11 +372,16 @@ def snap_armature(arm):
 def snap_curve(cu):
     f = {}
     rna_fields(cu, "", f)
-    pts = []
-    for s in getattr(cu, "splines", ()):
-        pts.append((s.type, s.use_cyclic_u, read(s.bezier_points, "co", len(s.bezier_points), 3),
-                    read(s.points, "co", len(s.points), 4)))
-    f["splines"] = f"{len(pts)} {digest(pts)}"
+    parts = []
+    splines = list(getattr(cu, "splines", ()))
+    for s in splines:
+        bp, pt = s.bezier_points, s.points
+        nb, np_ = len(bp), len(pt)
+        parts += [f"{s.type} {s.use_cyclic_u} {s.order_u} {s.resolution_u} {s.use_smooth}",
+                  read(bp, "co", nb, 3), read(bp, "handle_left", nb, 3), read(bp, "handle_right", nb, 3),
+                  read(bp, "radius", nb), read(bp, "tilt", nb),
+                  read(pt, "co", np_, 4), read(pt, "radius", np_), read(pt, "tilt", np_), read(pt, "weight", np_)]
+    f["splines"] = f"{len(splines)} {digest(*parts)}"
     if hasattr(cu, "body"):
         f["text"] = cu.body
     custom_props(cu, f)
@@ -375,6 +392,13 @@ def snap_generic(idb):
     f = {}
     rna_fields(idb, "", f)
     custom_props(idb, f)
+    return f
+
+
+def snap_camera(cam):
+    f = snap_generic(cam)
+    for k in ("angle", "angle_x", "angle_y"):  # derived from lens and sensor, which are listed already
+        f.pop(k, None)
     return f
 
 
@@ -399,18 +423,17 @@ def snap_collection(c):
 
 
 def snap_scene(sc):
+    """Only the settings Merge can take (session.scene_settings); objects and collections have their own rows."""
     r = sc.render
     return {"camera": fmt(sc.camera), "world": fmt(sc.world), "frame start": str(sc.frame_start),
             "frame end": str(sc.frame_end), "fps": fnum(r.fps / r.fps_base),
             "resolution": f"{r.resolution_x}×{r.resolution_y} @ {r.resolution_percentage}%",
-            "unit scale": fnum(sc.unit_settings.scale_length),
-            "top-level objects": ", ".join(sorted(o.name for o in sc.collection.objects)) or "—",
-            "top-level collections": ", ".join(sorted(c.name for c in sc.collection.children)) or "—"}
+            "unit scale": fnum(sc.unit_settings.scale_length)}
 
 
 SNAPPERS = {
     "OBJECT": snap_object, "MESH": snap_mesh, "MATERIAL": snap_material, "IMAGE": snap_image,
-    "NODETREE": snap_node_group, "CAMERA": snap_generic, "LIGHT": snap_generic, "ACTION": snap_action,
+    "NODETREE": snap_node_group, "CAMERA": snap_camera, "LIGHT": snap_generic, "ACTION": snap_action,
     "ARMATURE": snap_armature, "CURVE": snap_curve, "WORLD": snap_world, "COLLECTION": snap_collection,
     "SCENE": snap_scene,
 }
@@ -437,6 +460,13 @@ def snapshot(owned):
 
 
 # ---------------------------------------------------------------------------------------------- references
+
+def world_matrix(ob):
+    """World matrix from the parent chain (matrix_world is stale on objects outside any scene)."""
+    if ob.parent is None:
+        return ob.matrix_basis.copy()
+    return world_matrix(ob.parent) @ ob.matrix_parent_inverse @ ob.matrix_basis
+
 
 def references(idb):
     """IDs this one uses directly (for cascading a choice to what an object is made of)."""

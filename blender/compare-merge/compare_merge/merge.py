@@ -30,10 +30,17 @@ def plan(choices):
             continue
         if e.cat == "SCENE":
             scenes.append(e)
+            # A camera or world that only exists in the incoming file has to come in with the scene.
+            st = S.incoming_scenes.get(e.incoming) or {}
+            for cat, name in (("OBJECT", st.get("camera")), ("WORLD", st.get("world"))):
+                dep = S.index_inc.get((cat, name))
+                if dep is not None and S.entries[dep].status in (diff.ONLY_INCOMING, diff.RENAMED) \
+                        and S.entries[dep] not in bring:
+                    bring.append(S.entries[dep])
         elif e.status == diff.ONLY_CURRENT:
             if e.cat == "OBJECT":
                 remove.append(e)
-        else:
+        elif e not in bring:
             bring.append(e)
     return bring, remove, scenes
 
@@ -97,6 +104,16 @@ def apply(choices, scene_name):
             setattr(dst, attr, wanted)
     new = [i for i in ses.all_ids() if i.as_pointer() not in before and i.library is None]
 
+    def local_for(cat, incoming_name):
+        """Local data-block that stands for an incoming name after the merge (renames included)."""
+        idx = S.index_inc.get((cat, incoming_name))
+        if idx is None:
+            return local(cat, incoming_name)
+        e = S.entries[idx]
+        if (cat, e.incoming) in chosen:
+            return local(cat, e.incoming)
+        return local(cat, e.current) or local(cat, e.incoming)
+
     replaced, kept, dropped = [], [], []
     for n in new:
         cat = snapshot.ATTR_CAT.get(attr_of(n))
@@ -135,8 +152,42 @@ def apply(choices, scene_name):
             clash.name = f"{name} (incoming)"
         idb.name = name
 
+    # New objects Blender appended only because a picked object uses them (a parent, a modifier
+    # target) but whose row says Skip: honour Skip. Children keep their place in the world.
+    skipped = []
+    for n in kept:
+        if not alive(n) or not isinstance(n, bpy.types.Object):
+            continue
+        if ("OBJECT", n.name) not in chosen:
+            for child in n.children:
+                mw = snapshot.world_matrix(child)
+                child.parent = None
+                child.matrix_world = mw
+            skipped.append(n)
+    if skipped:
+        gone |= {o.as_pointer() for o in skipped}
+        bpy.data.batch_remove(skipped)
+    kept = [n for n in kept if alive(n)]
+
     # New and replaced objects sit in the collections they are in in the incoming file.
     scene = bpy.data.scenes.get((scene_name, None)) or bpy.context.scene
+
+    def ensure_collection(name, seen=()):
+        """Local collection `name`; a new one is created under its incoming parents, with its settings."""
+        c = bpy.data.collections.get((name, None))
+        if c is not None:
+            return c
+        info = S.incoming_colls.get(name) or {}
+        c = bpy.data.collections.new(name)
+        c.hide_render = info.get("hide_render", False)
+        c.hide_viewport = info.get("hide_viewport", False)
+        c.instance_offset = info.get("instance_offset", (0, 0, 0))
+        for is_master, parent_name in info.get("parents") or [(True, "")]:
+            parent = scene.collection if is_master or parent_name in seen else \
+                ensure_collection(parent_name, seen + (name,))
+            if c.name not in parent.children:
+                parent.children.link(c)
+        return c
     objects = [n for _c, n, e in replaced if e.cat == "OBJECT"] + \
               [n for n in kept if isinstance(n, bpy.types.Object)]
     for ob in objects:
@@ -148,11 +199,7 @@ def apply(choices, scene_name):
             if is_master:
                 targets.append(scene.collection)
                 continue
-            c = bpy.data.collections.get((cname, None))
-            if c is None:
-                c = bpy.data.collections.new(cname)
-                scene.collection.children.link(c)
-            targets.append(c)
+            targets.append(ensure_collection(cname))
         if not targets:
             targets = [scene.collection]
         for c in targets:
@@ -179,10 +226,9 @@ def apply(choices, scene_name):
         st = inc_scenes.get(e.incoming)
         if sc is None or st is None:
             continue
-        sc.camera = bpy.data.objects.get((st["camera"], None)) if st["camera"] else None
-        sc.frame_start, sc.frame_end = st["frame_start"], st["frame_end"]
-        sc.render.fps, sc.render.fps_base = st["fps"], st["fps_base"]
-        sc.render.resolution_x, sc.render.resolution_y = st["resolution_x"], st["resolution_y"]
+        sc.camera = local_for("OBJECT", st["camera"]) if st["camera"] else None
+        sc.world = local_for("WORLD", st["world"]) if st["world"] else None
+        preview.apply_scene_settings(sc, st)
 
     # Leftovers of the append nobody uses (shape keys of dropped meshes, ...).
     for _ in range(8):
