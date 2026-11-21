@@ -4,30 +4,6 @@
   "data": [
     {
       "schema_version": "1.0.0",
-      "id": "compare_merge",
-      "name": "Compare & Merge",
-      "tagline": "Diff two versions of a .blend, preview them and merge",
-      "version": "0.2.0",
-      "type": "add-on",
-      "maintainer": "JOYCO",
-      "license": [
-        "SPDX:GPL-3.0-or-later"
-      ],
-      "blender_version_min": "5.1.0",
-      "permissions": {
-        "files": "Read the .blend file you choose to compare with"
-      },
-      "tags": [
-        "Scene",
-        "Import-Export",
-        "Pipeline"
-      ],
-      "archive_url": "./compare_merge-0.2.0.zip",
-      "archive_size": 34999,
-      "archive_hash": "sha256:0e14bac641da055811f6f53309c44f86bc187a4cfedc5aeccfa3c79bcc813f55"
-    },
-    {
-      "schema_version": "1.0.0",
       "id": "texel_coverage",
       "name": "Texel Coverage",
       "tagline": "Size textures, UVs and culling from the cameras that see them",
@@ -49,6 +25,30 @@
       "archive_url": "./texel_coverage-0.3.0.zip",
       "archive_size": 67034,
       "archive_hash": "sha256:7293ee64e10594a7901907a5dd97d99548f0c9c7858da13a77a1f9d74dfd2d01"
+    },
+    {
+      "schema_version": "1.0.0",
+      "id": "compare_merge",
+      "name": "Compare & Merge",
+      "tagline": "Diff two versions of a .blend, preview them and merge",
+      "version": "0.3.0",
+      "type": "add-on",
+      "maintainer": "JOYCO",
+      "license": [
+        "SPDX:GPL-3.0-or-later"
+      ],
+      "blender_version_min": "5.1.0",
+      "permissions": {
+        "files": "Read the .blend file you choose to compare with"
+      },
+      "tags": [
+        "Scene",
+        "Import-Export",
+        "Pipeline"
+      ],
+      "archive_url": "./compare_merge-0.3.0.zip",
+      "archive_size": 46438,
+      "archive_hash": "sha256:c21a4aa925d90c87a13bbcf6fa3974ef2de607f34fc38f43e93be0c201a82c2b"
     }
   ]
 }
