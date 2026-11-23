@@ -418,3 +418,82 @@ def build_animation_review(variant, path):
     v.targets[0].data_path = "location.y" if inc else "location.z"
     d.expression = v.name
     bpy.ops.wm.save_as_mainfile(filepath=path)
+
+
+def set_gn_input(mod, name, value):
+    """Set a Geometry Nodes modifier input by its name (5.3: properties.inputs; older: ID properties)."""
+    from compare_merge import snapshot
+    ident = next(i for label, i in snapshot.gn_inputs(mod) if label == name)
+    st = snapshot.gn_input(mod, ident)
+    if st is not None:
+        st.value = value
+    else:
+        mod[ident] = value
+
+
+def build_robustness(variant, path, shared_texture):
+    """Cases found stress-testing a production file (run_tests.test_robustness): Geometry Nodes inputs
+    and node settings, modifier toggles, UI-only modifier state, a shared texture reached by another
+    relative path, and renames that every user of the renamed data-block refers to."""
+    inc = variant == "incoming"
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    sc = bpy.context.scene
+    link = sc.collection.objects.link
+
+    smooth = bpy.data.node_groups.new("Smooth", "GeometryNodeTree")
+    smooth.interface.new_socket("Geometry", in_out="INPUT", socket_type="NodeSocketGeometry")
+    smooth.interface.new_socket("Geometry", in_out="OUTPUT", socket_type="NodeSocketGeometry")
+    smooth.interface.new_socket("Angle", in_out="INPUT", socket_type="NodeSocketFloat")
+    gi, go = smooth.nodes.new("NodeGroupInput"), smooth.nodes.new("NodeGroupOutput")
+    smooth.links.new(gi.outputs[0], go.inputs[0])
+    b = smooth.nodes.new("FunctionNodeBooleanMath")
+    b.name = "Bool"
+    b.operation = "OR" if inc else "AND"
+
+    smoothed = bpy.data.objects.new("Smoothed", cube_mesh("SmoothedMesh"))
+    link(smoothed)
+    mod = smoothed.modifiers.new("Smooth", "NODES")
+    mod.node_group = smooth
+    set_gn_input(mod, "Angle", 1.2 if inc else 0.5)
+
+    panel = bpy.data.objects.new("PanelOnly", cube_mesh("PanelMesh"))
+    link(panel)
+    pm = panel.modifiers.new("Smooth", "NODES")
+    pm.node_group = smooth
+    for p in ("open_manage_panel", "open_warnings_panel"):  # a panel opened in the modifier UI
+        if hasattr(pm, p):
+            setattr(pm, p, inc)
+
+    beveled = bpy.data.objects.new("Beveled", cube_mesh("BeveledMesh"))
+    link(beveled)
+    bevel = beveled.modifiers.new("Bevel", "BEVEL")
+    bevel.show_render = bevel.show_viewport = not inc
+    smoothed.location.z = beveled.location.z = 1 if inc else 0  # a second unit: the picks stay Mixed
+
+    folder = os.path.dirname(path)
+    img = bpy.data.images.load(shared_texture)
+    img.name = "Shared"
+    img.filepath = "//" + os.path.relpath(shared_texture, folder)  # ../shared or ../../shared
+    img.use_fake_user = True
+
+    glass = bpy.data.materials.new("Glass")
+    glass.diffuse_color = (0.2, 0.4, 1, 0.3)  # unlike ChainMat: identical data-blocks can't be paired
+    for i in range(3):
+        me = cube_mesh(f"Pane{i}Mesh", 0.5)
+        me.materials.append(glass)
+        link(bpy.data.objects.new(f"Pane{i}", me))
+    chain_mat = bpy.data.materials.new("ChainMat")
+    chain_me = cube_mesh("ChainMesh")
+    chain_me.materials.append(chain_mat)
+    link(bpy.data.objects.new("Chain", chain_me))
+    crates = bpy.data.collections.new("Crates")
+    sc.collection.children.link(crates)
+    crate = bpy.data.objects.new("Crate", None)
+    crates.objects.link(crate)
+    if inc:  # renamed, nothing else
+        glass.name = "Glass2"
+        chain_mat.name, chain_me.name = "ChainMat2", "ChainMesh2"
+        crate.name = "Crate2"
+
+    os.makedirs(folder, exist_ok=True)
+    bpy.ops.wm.save_as_mainfile(filepath=path)

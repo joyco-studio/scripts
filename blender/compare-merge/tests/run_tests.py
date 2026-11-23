@@ -264,7 +264,11 @@ def test_review():
     check(status("MATERIAL", "Mathy") == diff.CHANGED, "swapped links into same-named sockets")
     check(status("NODETREE", "Tint") == diff.CHANGED and status("MATERIAL", "Tinted") == diff.SAME, "node group change")
     check(status("SCENE", "Scene") == diff.CHANGED and
-          {"resolution", "unit scale", "camera", "world"} <= set(changed_fields("SCENE", "Scene")), "scene fields")
+          {"resolution", "unit scale", "camera"} <= set(changed_fields("SCENE", "Scene")), "scene fields")
+    # The incoming file no longer uses WorldA, so Blender didn't save it: its identical Sky reads as a
+    # rename, and the scene's world, read under its current name, as unchanged. Merge still brings Sky.
+    check(status("WORLD", "WorldA") == diff.RENAMED and "world" not in changed_fields("SCENE", "Scene"),
+          "a renamed world shows on its own row, not on the scene")
 
     # Close + compare again: every module must see the new comparison (reset clears in place).
     api.close()
@@ -758,6 +762,60 @@ def test_animation_review():
     api.close()
 
 
+BCUR = os.path.join(TMP, "robust", "final", "scene.blend")
+BINC = os.path.join(TMP, "robust", "artist", "v2", "scene.blend")  # another folder, one level deeper
+
+
+def test_robustness():
+    """Changes a production file showed the diff missed or over-reported (see KNOWN-ISSUES.md)."""
+    print("robustness")
+    shared = os.path.join(TMP, "robust", "shared", "tex.png")
+    os.makedirs(os.path.dirname(shared), exist_ok=True)
+    fixtures.write_png(shared, (1, 0, 1, 1))
+    fixtures.build_robustness("incoming", BINC, shared)
+    fixtures.build_robustness("current", BCUR, shared)
+    bpy.ops.wm.open_mainfile(filepath=BCUR)
+    api.start(BINC)
+
+    e = ses.S.entries[entry("OBJECT", "Smoothed")]
+    angle = [(a, b) for f, a, b in e.changes if f == "modifier Smooth · input Angle"]
+    check(angle == [("0.5", "1.2")], f"Geometry Nodes modifier input compared ({e.changes})")
+    check("Bool · operation" in changed_fields("NODETREE", "Smooth"), "Geometry Nodes node setting compared")
+    check({"modifier Bevel · show_render", "modifier Bevel · show_viewport"} <= set(changed_fields("OBJECT", "Beveled")),
+          "modifier render / viewport toggles compared")
+    check(status("OBJECT", "PanelOnly") == diff.SAME, f"a panel opened in the modifier UI is not a change "
+          f"({changed_fields('OBJECT', 'PanelOnly')})")
+    check(status("IMAGE", "Shared") == diff.SAME, f"same texture by another relative path "
+          f"({changed_fields('IMAGE', 'Shared')})")
+    renamed = sorted((e.cat, e.current, e.incoming) for e in ses.S.entries if e.status == diff.RENAMED)
+    check(renamed == [("MATERIAL", "ChainMat", "ChainMat2"),
+                      ("MATERIAL", "Glass", "Glass2"), ("MESH", "ChainMesh", "ChainMesh2"),
+                      ("OBJECT", "Crate", "Crate2")], f"renames found, a chain of them too ({renamed})")
+    users = [n for cat, n in [("OBJECT", f"Pane{i}") for i in range(3)] + [("MESH", f"Pane{i}Mesh") for i in range(3)]
+             + [("OBJECT", "Chain"), ("COLLECTION", "Crates")] if status(cat, n) != diff.SAME]
+    check(not users, f"what uses a renamed data-block is unchanged ({users})")
+
+    # Field-level picks of the new fields, then everything else.
+    check(api.set_unit(entry("OBJECT", "Smoothed"), "mod:Smooth", "INCOMING"), "modifier input unit pickable")
+    check(api.set_unit(entry("OBJECT", "Beveled"), "mod:Bevel", "INCOMING"), "modifier toggles unit pickable")
+    print("  ", api.merge())
+    smoothed, beveled = bpy.data.objects["Smoothed", None], bpy.data.objects["Beveled", None]
+    from compare_merge import snapshot
+    st = snapshot.gn_input(smoothed.modifiers["Smooth"], snapshot.gn_inputs(smoothed.modifiers["Smooth"])[0][1])
+    check(st is None or abs(st.value - 1.2) < 1e-6, "merge: modifier input taken")
+    check(not beveled.modifiers["Bevel"].show_render, "merge: modifier render toggle taken")
+    check(changed_fields("OBJECT", "Smoothed") == ["location"] and changed_fields("OBJECT", "Beveled") == ["location"],
+          f"only the units not picked still differ ({changed_fields('OBJECT', 'Smoothed')}, "
+          f"{changed_fields('OBJECT', 'Beveled')})")
+    for i, e in enumerate(ses.S.entries):
+        if e.status != diff.SAME and ses.choosable(e):
+            api.set_choice(i, "INCOMING", cascade=False)
+    print("  ", api.merge())
+    left = [(e.cat, e.name, e.status) for e in ses.S.entries if e.status != diff.SAME]
+    check(not left, f"merging everything leaves no difference ({left})")
+    api.close()
+
+
 def main():
     fixtures.build("incoming", INC)
     fixtures.build("current", CUR)
@@ -768,7 +826,7 @@ def main():
     bpy.ops.wm.open_mainfile(filepath=CUR)
     for t in (test_image_snapshot_ignores_loaded_pixels, test_diff, test_preview_is_safe, test_views, test_merge, test_close, test_review,
               test_failed_merge_rolls_back, test_scene_rename, test_operator_undo, test_units, test_units_merge,
-              test_units_undo, test_session_state, test_animation_review):
+              test_units_undo, test_session_state, test_animation_review, test_robustness):
         try:
             t()
         except Exception:

@@ -174,7 +174,7 @@ def copy_struct(dst, src, resolve, depth=0):
     for _ in range(2):
         for p in src.bl_rna.properties:
             ident = p.identifier
-            if ident in snapshot.SKIP or ident.startswith(snapshot.SKIP_PREFIX) or p.type == "COLLECTION":
+            if snapshot.skipped(ident) or p.type == "COLLECTION":
                 continue
             try:
                 v = getattr(src, ident)
@@ -249,10 +249,24 @@ def copy_stack_item(dst, src, kind, name, resolve):
     s, d = getattr(src, kind).get(name), getattr(dst, kind).get(name)
     if s is None or d is None:
         return
-    copy_struct(d, s, resolve)
-    for k in s.keys():  # Geometry Nodes inputs are ID properties of the modifier
+    copy_struct(d, s, resolve)  # node_group first: it decides which inputs there are
+    if kind == "modifiers":
+        copy_gn_inputs(d, s, resolve)
+
+
+def copy_gn_inputs(dst, src, resolve):
+    """The inputs of a Geometry Nodes modifier (snapshot.gn_input_fields)."""
+    for _label, ident in snapshot.gn_inputs(src):
+        s, d = snapshot.gn_input(src, ident), snapshot.gn_input(dst, ident)
+        if s is not None and d is not None:
+            copy_struct(d, s, resolve)
+    try:
+        keys = src.keys()  # older Blender: the inputs are ID properties of the modifier
+    except TypeError:  # 5.3: modifiers have no ID properties
+        return
+    for k in keys:
         try:
-            d[k] = id_value(s[k], resolve)
+            dst[k] = id_value(src[k], resolve)
         except (TypeError, KeyError):
             pass
 
