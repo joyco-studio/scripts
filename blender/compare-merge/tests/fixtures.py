@@ -401,6 +401,13 @@ def build_animation_review(variant, path):
     sc.collection.objects.link(bpy.data.objects.new("DrivenLamp", lamp))
     lamp.driver_add("energy").driver.expression = "20" if inc else "10"
 
+    muted = bpy.data.lights.new("MutedLamp", "POINT")  # same driver, muted in the incoming file
+    sc.collection.objects.link(bpy.data.objects.new("MutedLamp", muted))
+    fc = muted.driver_add("energy")
+    fc.driver.expression = "10"
+    fc.mute = inc
+    muted.energy = 10
+
     mat = bpy.data.materials.new("DrivenMat")
     mat.use_fake_user = True
     rough = next(n for n in mat.node_tree.nodes if n.type == "BSDF_PRINCIPLED").inputs["Roughness"]

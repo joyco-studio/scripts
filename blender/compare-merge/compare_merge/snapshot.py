@@ -130,13 +130,15 @@ def anim_paths(idb):
         if ad:
             curves = list(ad.drivers)
             acts = [(ad.action, getattr(ad, "action_slot", None))]
-            acts += [(st.action, getattr(st, "action_slot", None)) for tr in ad.nla_tracks for st in tr.strips]
+            acts += [(st.action, getattr(st, "action_slot", None)) for tr in ad.nla_tracks if not tr.mute
+                     for st in tr.strips if not st.mute]
             for act, slot in acts:
                 if act:
                     sid = slot.identifier if slot else None
                     curves += [fc for s, fc in iter_fcurves(act) if not (s and sid and s != sid)]
             for fc in curves:
-                paths.setdefault(fc.data_path, set()).add(fc.array_index)
+                if not fc.mute:  # a muted curve or driver leaves the saved value alone: compare it
+                    paths.setdefault(fc.data_path, set()).add(fc.array_index)
         _anim[key] = paths
     return _anim[key]
 
@@ -181,7 +183,7 @@ def fcurve_digest(fc):
         rna_fields(m, "", sub, depth=1)
         mods.append((m.type, sorted(sub.items())))
     return digest(read(kp, "co", n, 2), read(kp, "handle_left", n, 2), read(kp, "handle_right", n, 2),
-                  [(k.interpolation, k.easing) for k in kp], fc.extrapolation, mods)
+                  [(k.interpolation, k.easing) for k in kp], fc.extrapolation, fc.mute, mods)
 
 
 def driver_digest(ad):

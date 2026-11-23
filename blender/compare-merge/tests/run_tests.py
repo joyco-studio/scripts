@@ -749,6 +749,9 @@ def test_animation_review():
     check(cur[("LIGHT", "DrivenLamp")]["energy"] == snapshot.ANIMATED, "driven light energy reads animated")
     check("drivers" in changed_fields("LIGHT", "DrivenLamp"), "a light driver's expression change shows")
     check("node tree drivers" in changed_fields("MATERIAL", "DrivenMat"), "a node driver's target change shows")
+    check((cur[("LIGHT", "MutedLamp")]["energy"], inc[("LIGHT", "MutedLamp")]["energy"]) == (snapshot.ANIMATED, "10"),
+          "a muted driver leaves its value compared")
+    check("drivers" in changed_fields("LIGHT", "MutedLamp"), "muting a driver shows as a driver change")
     for cat, name, field in (("LIGHT", "DrivenLamp", "drivers"), ("MATERIAL", "DrivenMat", "node tree drivers")):
         u = next((u for u in apply.units(entry(cat, name)) if field in [f for f, _a, _b in u.fields]), None)
         check(u is not None and u.locked, f"{name}: drivers come with the whole row")
