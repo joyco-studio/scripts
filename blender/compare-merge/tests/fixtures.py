@@ -88,10 +88,11 @@ def build(variant, path):
         sc.collection.objects.link(only)
         sc.frame_end = 250
 
-    cube.keyframe_insert("location", frame=1)
-    cube.location.z += 1
-    cube.keyframe_insert("location", frame=20)
-    cube.location.z -= 1
+    # Keyframed rotation (location stays a plain value the tests compare and merge).
+    cube.keyframe_insert("rotation_euler", frame=1)
+    cube.rotation_euler.z = 0.5 if variant == "current" else 1.0
+    cube.keyframe_insert("rotation_euler", frame=20)
+    cube.rotation_euler.z = 0
     bpy.ops.wm.save_as_mainfile(filepath=path)
 
 
@@ -297,4 +298,79 @@ def build_units(variant, path):
     hanger.location = (0, 0, 0) if inc else (1, 1, 1)
 
     os.makedirs(os.path.dirname(path), exist_ok=True)
+    bpy.ops.wm.save_as_mainfile(filepath=path)
+
+
+def write_png(path, color):
+    img = bpy.data.images.new("tmp_png", 8, 8)
+    img.generated_color = color
+    img.filepath_raw = path
+    img.file_format = "PNG"
+    img.save()
+    bpy.data.images.remove(img)
+
+
+def build_session_state(path):
+    """Data whose value in an open file depends on the session (current frame, Edit Mode) and images
+    that read several files (UDIM tiles, a sequence). See run_tests.test_session_state."""
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    sc = bpy.context.scene
+    sc.frame_start, sc.frame_end = 1, 50
+    link = sc.collection.objects.link
+
+    def keyed(struct, prop, a, b):
+        setattr(struct, prop, a)
+        struct.keyframe_insert(prop, frame=1)
+        setattr(struct, prop, b)
+        struct.keyframe_insert(prop, frame=50)
+
+    me = cube_mesh("KeyedMesh")
+    ob = bpy.data.objects.new("Animated", me)
+    link(ob)
+    ob.shape_key_add(name="Basis")
+    keyed(ob.shape_key_add(name="Squash"), "value", 0.0, 1.0)
+    mat = bpy.data.materials.new("KeyedMat")
+    rough = next(n for n in mat.node_tree.nodes if n.type == "BSDF_PRINCIPLED").inputs["Roughness"]
+    keyed(rough, "default_value", 0.1, 0.9)
+    me.materials.append(mat)
+    keyed(ob, "location", (0, 0, 0), (5, 0, 0))
+    ob["wobble"] = 0.0
+    ob.keyframe_insert('["wobble"]', frame=1)
+    ob["wobble"] = 1.0
+    ob.keyframe_insert('["wobble"]', frame=50)
+    drv = bpy.data.objects.new("Driven", None)
+    link(drv)
+    d = drv.driver_add("scale", 0).driver
+    d.type, d.expression = "SCRIPTED", "frame / 10"
+    lamp = bpy.data.lights.new("KeyedLamp", "POINT")
+    keyed(lamp, "energy", 10.0, 1000.0)
+    link(bpy.data.objects.new("KeyedLamp", lamp))
+
+    arm = bpy.data.armatures.new("RigData")
+    rig = bpy.data.objects.new("Rig", arm)
+    link(rig)
+    bpy.context.view_layer.objects.active = rig
+    bpy.ops.object.mode_set(mode="EDIT")
+    arm.edit_bones.new("Bone").tail = (0, 0, 1)
+    bpy.ops.object.mode_set(mode="OBJECT")
+    keyed(rig.pose.bones["Bone"], "location", (0, 0, 0), (0, 2, 0))
+
+    link(bpy.data.objects.new("Plain", cube_mesh("PlainMesh")))
+
+    tex = os.path.join(os.path.dirname(path), "textures")
+    os.makedirs(tex, exist_ok=True)
+    for t in (1001, 1002):
+        write_png(os.path.join(tex, f"udim.{t}.png"), (1, 0, 0, 1))
+    for f in (1, 2, 3):
+        write_png(os.path.join(tex, f"seq.{f:04d}.png"), (0, 1, 0, 1))
+    udim = bpy.data.images.load(os.path.join(tex, "udim.1001.png"))
+    udim.name, udim.source = "Udim", "TILED"
+    udim.tiles.new(1002)
+    udim.filepath = "//textures/udim.<UDIM>.png"
+    seq = bpy.data.images.load(os.path.join(tex, "seq.0001.png"))
+    seq.name, seq.source = "Seq", "SEQUENCE"
+    seq.filepath = "//textures/seq.0001.png"
+    udim.use_fake_user = seq.use_fake_user = True
+
+    sc.frame_set(1)
     bpy.ops.wm.save_as_mainfile(filepath=path)

@@ -74,6 +74,18 @@ def test_diff():
     print(api.text_report(ses.S.entries, limit=3))
 
 
+def test_image_snapshot_ignores_loaded_pixels():
+    """An image snapshots the same whether or not Blender has loaded its pixels (the viewport drew it)."""
+    print("image snapshot")
+    from compare_merge import snapshot
+    img = bpy.data.images["Paint", None]
+    img.buffers_free()
+    before = snapshot.snap_image(img)
+    img.pixels[0]  # loads the pixels, like the viewport drawing it
+    check(img.has_data, "pixels loaded")
+    check(snapshot.snap_image(img) == before, "snapshot unchanged by loading pixels")
+
+
 def test_preview_is_safe():
     print("preview")
     sc = preview.preview_scene()
@@ -664,6 +676,56 @@ def test_units_undo():
         compare_merge.unregister()
 
 
+SCUR = os.path.join(TMP, "session", "final", "scene.blend")
+SINC = os.path.join(TMP, "session", "artist", "scene.blend")
+
+
+def test_session_state():
+    """Only what the files hold is compared, not what this session did to the open one."""
+    print("session state")
+    import bmesh
+    import shutil
+    from compare_merge import snapshot
+    fixtures.build_session_state(SCUR)
+    shutil.copytree(os.path.dirname(SCUR), os.path.dirname(SINC))  # the same file, byte for byte
+    bpy.ops.wm.open_mainfile(filepath=SCUR)
+    bpy.context.scene.frame_set(25)  # writes frame 25's values onto everything keyframed or driven
+    api.start(SINC)
+    drift = [(e.cat, e.current, e.changes) for e in ses.S.entries if e.status != diff.SAME]
+    check(not drift, f"an identical copy diffs clean after scrubbing the timeline ({drift})")
+    cur = ses.S.current_snap
+    check(cur[("OBJECT", "Animated")]["location"] == snapshot.ANIMATED, "keyframed location reads animated")
+    check(cur[("OBJECT", "Driven")]["scale"] == snapshot.ANIMATED, "driven scale reads animated")
+    check(cur[("OBJECT", "Animated")]["custom › wobble"] == snapshot.ANIMATED, "keyframed custom property")
+    check(cur[("MATERIAL", "KeyedMat")]["Principled BSDF › Roughness"] == snapshot.ANIMATED, "keyframed node input")
+    check(cur[("LIGHT", "KeyedLamp")]["energy"] == snapshot.ANIMATED, "keyframed light energy")
+    check("value animated" in cur[("MESH", "KeyedMesh")]["shape key Squash"], "keyframed shape key value")
+    check("2 files" in cur[("IMAGE", "Udim")].get("content", ""), "every UDIM tile hashed")
+    check("3 files" in cur[("IMAGE", "Seq")].get("content", ""), "every sequence frame hashed")
+
+    # The artist repainted one UDIM tile and one frame of the sequence (not the first ones).
+    tex = os.path.join(os.path.dirname(SINC), "textures")
+    fixtures.write_png(os.path.join(tex, "udim.1002.png"), (0, 0, 1, 1))
+    fixtures.write_png(os.path.join(tex, "seq.0002.png"), (0, 0, 1, 1))
+    api.start(SINC)
+    check(status("IMAGE", "Udim") == diff.CHANGED, "repainted UDIM tile found")
+    check(status("IMAGE", "Seq") == diff.CHANGED, "repainted sequence frame found")
+
+    # A vertex moved in Edit Mode, still in Edit Mode.
+    plain = bpy.data.objects["Plain", None]
+    bpy.context.view_layer.objects.active = plain
+    bpy.ops.object.mode_set(mode="EDIT")
+    bm = bmesh.from_edit_mesh(plain.data)
+    bm.verts.ensure_lookup_table()
+    bm.verts[0].co.x += 1
+    bmesh.update_edit_mesh(plain.data)
+    api.refresh()
+    fields = changed_fields("MESH", "PlainMesh")
+    check(fields == ["positions"], f"edit-mode vertex move found, nothing else ({fields})")
+    bpy.ops.object.mode_set(mode="OBJECT")
+    api.close()
+
+
 def main():
     fixtures.build("incoming", INC)
     fixtures.build("current", CUR)
@@ -672,9 +734,9 @@ def main():
     fixtures.build_units("incoming", UINC)
     fixtures.build_units("current", UCUR)
     bpy.ops.wm.open_mainfile(filepath=CUR)
-    for t in (test_diff, test_preview_is_safe, test_views, test_merge, test_close, test_review,
+    for t in (test_image_snapshot_ignores_loaded_pixels, test_diff, test_preview_is_safe, test_views, test_merge, test_close, test_review,
               test_failed_merge_rolls_back, test_scene_rename, test_operator_undo, test_units, test_units_merge,
-              test_units_undo):
+              test_units_undo, test_session_state):
         try:
             t()
         except Exception:
