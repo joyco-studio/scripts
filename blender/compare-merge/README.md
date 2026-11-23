@@ -2,7 +2,7 @@
 
 Blender extension for diffing two versions of a `.blend` and merging the changes you pick, git-style. Built for the "artist's copy vs. final file" flow: open the final file, point the tool at the artist's version, look at every difference, preview either version of anything in the viewport and merge only what you want.
 
-It compares everything a glTF export is made of: objects (transforms, parenting, modifiers, constraints, material slots, collections, custom properties/extras), meshes (geometry, topology, UV maps, attributes, shape keys, weights), materials and node groups (node by node, every input, every link), images (file contents, packed data, color space), cameras, lights, actions (every keyframe), armatures, curves/text, worlds, collections and scene settings (camera, frame range, fps).
+It compares everything a glTF export is made of: objects (transforms, parenting, modifiers, constraints, material slots, collections, custom properties/extras), meshes (geometry, topology, UV maps, attributes, shape keys, weights), materials and node groups (node by node, every input, every link), images (file contents, including every UDIM tile and sequence frame, packed data, color space), cameras, lights, actions (every keyframe), armatures, curves/text, worlds, collections and scene settings (camera, frame range, fps).
 
 ## Install
 
@@ -77,6 +77,7 @@ Exit code: 0 identical, 1 error, 2 the files differ (like `git diff --exit-code`
 - Data linked into either file from other libraries is not compared.
 - The preview swaps picked images and node groups inside materials and Geometry Nodes modifiers, but not images or groups nested inside other node groups.
 - Vertex weights are compared on meshes up to 100k vertices (no bulk API for them).
+- A keyframed or driven value shows as `animated` rather than its number: Blender writes the current frame's value onto the open file, so the number would only say where the playhead is. Changes to the animation show on the action (or the driver).
 
 ## Files
 

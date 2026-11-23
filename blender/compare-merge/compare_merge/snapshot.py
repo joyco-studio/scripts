@@ -9,6 +9,7 @@ details panel recomputes richer stats (how many vertices moved, by how much) onl
 import hashlib
 import math
 import os
+import re
 
 import bpy
 import numpy as np
@@ -111,6 +112,48 @@ def read(coll, key, n, comps=1, dtype=np.float32):
     return a
 
 
+# ---------------------------------------------------------------------------------------------- animated values
+# Blender writes the value of the current frame onto every keyframed or driven property of the open
+# file, so its value says where the playhead is, not what the file holds; the linked copy keeps the
+# value it was saved with. Such fields read ANIMATED instead and the action's hash catches real changes.
+
+ANIMATED = "animated"
+_anim = {}  # id_data pointer -> data paths keyframed or driven on it; cleared for every snapshot
+
+
+def anim_paths(idb):
+    key = idb.as_pointer()
+    if key not in _anim:
+        paths = set()
+        ad = getattr(idb, "animation_data", None)
+        if ad:
+            paths = {d.data_path for d in ad.drivers}
+            acts = [(ad.action, getattr(ad, "action_slot", None))]
+            acts += [(st.action, getattr(st, "action_slot", None)) for tr in ad.nla_tracks for st in tr.strips]
+            for act, slot in acts:
+                if act:
+                    sid = slot.identifier if slot else None
+                    paths |= {fc.data_path for s, fc in iter_fcurves(act) if not (s and sid and s != sid)}
+        _anim[key] = paths
+    return _anim[key]
+
+
+def animated(struct, prop):
+    """True when `prop` of `struct` (any struct inside an ID) is keyframed or driven."""
+    paths = anim_paths(struct.id_data)
+    if not paths:
+        return False
+    try:
+        return struct.path_from_id(prop) in paths
+    except (ValueError, TypeError):
+        return False
+
+
+def value(struct, prop, v=None):
+    """fmt() of struct.prop, or ANIMATED."""
+    return ANIMATED if animated(struct, prop) else fmt(getattr(struct, prop) if v is None else v)
+
+
 # ---------------------------------------------------------------------------------------------- generic RNA
 
 def rna_fields(struct, prefix, out, depth=0, skip=SKIP):
@@ -140,7 +183,7 @@ def rna_fields(struct, prefix, out, depth=0, skip=SKIP):
                     items.append(sorted(sub.items()))
                 out[key] = f"{len(items)} items {digest(items)}"
         elif not p.is_readonly:
-            out[key] = fmt(v)
+            out[key] = value(struct, ident, v)
 
 
 def custom_props(idb, out):
@@ -148,7 +191,7 @@ def custom_props(idb, out):
     for k in idb.keys():
         if k.startswith("_") or k in ("cycles", "cm_draft") or k.startswith("tc_"):
             continue
-        out[f"custom › {k}"] = fmt(idb[k])
+        out[f"custom › {k}"] = ANIMATED if f'["{k}"]' in anim_paths(idb) else fmt(idb[k])
 
 
 def node_values(node):
@@ -178,7 +221,7 @@ def node_tree_fields(nt, out, prefix=""):
             out[f"{n} · muted"] = "on"
         rna_fields(node, f"{n} · ", out, depth=1, skip=NODE_SKIP)
         for label, sock in node_values(node).items():
-            out[f"{n} › {label}"] = fmt(sock.default_value)
+            out[f"{n} › {label}"] = value(sock, "default_value")
     for link in nt.links:
         if link.is_muted:
             continue
@@ -203,21 +246,21 @@ def snap_object(o):
             f["parent bone"] = o.parent_bone
         m = o.matrix_parent_inverse
         f["parent inverse"] = "identity" if m == Matrix.Identity(4) else fmt(m)
-    f["location"] = fmt(o.location)
+    f["location"] = value(o, "location")
     mode = o.rotation_mode
     if mode == "QUATERNION":
-        f["rotation"] = fmt(o.rotation_quaternion)
+        f["rotation"] = value(o, "rotation_quaternion")
     elif mode == "AXIS_ANGLE":
-        f["rotation"] = fmt(tuple(o.rotation_axis_angle))
+        f["rotation"] = value(o, "rotation_axis_angle", tuple(o.rotation_axis_angle))
     else:
-        f["rotation"] = fdeg(o.rotation_euler)
+        f["rotation"] = ANIMATED if animated(o, "rotation_euler") else fdeg(o.rotation_euler)
     f["rotation mode"] = mode
-    f["scale"] = fmt(o.scale)
-    f["delta location"] = fmt(o.delta_location)
-    f["delta rotation"] = fdeg(o.delta_rotation_euler)
-    f["delta scale"] = fmt(o.delta_scale)
-    f["hide in renders"] = fmt(o.hide_render)
-    f["disabled in viewports"] = fmt(o.hide_viewport)
+    f["scale"] = value(o, "scale")
+    f["delta location"] = value(o, "delta_location")
+    f["delta rotation"] = ANIMATED if animated(o, "delta_rotation_euler") else fdeg(o.delta_rotation_euler)
+    f["delta scale"] = value(o, "delta_scale")
+    f["hide in renders"] = value(o, "hide_render")
+    f["disabled in viewports"] = value(o, "hide_viewport")
     f["collections"] = ", ".join(sorted(c.name for c in o.users_collection
                                         if c.as_pointer() not in _preview_masters)) or "—"
     if o.instance_type != "NONE":
@@ -242,8 +285,9 @@ def snap_object(o):
         if ad.drivers:
             f["drivers"] = digest(sorted((d.data_path, d.array_index, d.driver.expression) for d in ad.drivers))
     if o.pose:
-        f["pose"] = digest([(b.name, tuple(b.location), tuple(b.rotation_quaternion), tuple(b.rotation_euler),
-                             tuple(b.scale)) for b in o.pose.bones])
+        f["pose"] = digest([(b.name, *(ANIMATED if animated(b, p) else tuple(getattr(b, p))
+                                       for p in ("location", "rotation_quaternion", "rotation_euler", "scale")))
+                            for b in o.pose.bones])
     custom_props(o, f)
     return f
 
@@ -266,6 +310,15 @@ def attribute_array(a):
 
 
 def snap_mesh(me):
+    if me.is_editmode:  # attributes would read the edit-mode data, laid out differently: read a
+        tmp = me.copy()  # copy, which has the mesh as session.refresh_current synced it
+        try:
+            return snap_mesh(tmp)
+        finally:
+            for idb in (tmp, tmp.shape_keys):  # freed: its address may come back as another ID
+                if idb:
+                    _anim.pop(idb.as_pointer(), None)
+            bpy.data.meshes.remove(tmp)
     f = {"vertices": str(len(me.vertices)), "edges": str(len(me.edges)), "faces": str(len(me.polygons))}
     f["positions"] = digest(read(me.vertices, "co", len(me.vertices), 3))
     f["topology"] = digest(read(me.polygons, "loop_total", len(me.polygons), 1, np.int32),
@@ -281,7 +334,7 @@ def snap_mesh(me):
     f["materials"] = ", ".join(fmt(m) for m in me.materials) or "—"
     if me.shape_keys:
         for kb in me.shape_keys.key_blocks:
-            f[f"shape key {kb.name}"] = f"{digest(read(kb.data, 'co', len(kb.data), 3))} value {fnum(kb.value)} " \
+            f[f"shape key {kb.name}"] = f"{digest(read(kb.data, 'co', len(kb.data), 3))} value {value(kb, 'value')} " \
                                          f"relative to {kb.relative_key.name}"
     if len(me.vertices) <= 100_000:  # no bulk API for deform weights; skip the Python loop on huge meshes
         weights = [(v.index, g.group, round(g.weight, 5)) for v in me.vertices for g in v.groups]
@@ -324,17 +377,48 @@ def image_path(img):
     return os.path.normpath(bpy.path.abspath(img.filepath, library=img.library)) if img.filepath else ""
 
 
+def image_files(img):
+    """Every file an image reads: each UDIM tile, each frame of a sequence, else its one file."""
+    path = image_path(img)
+    if img.source == "TILED":
+        return [path.replace("<UDIM>", str(t.number))
+                .replace("<UVTILE>", f"u{(t.number - 1001) % 10 + 1}_v{(t.number - 1001) // 10 + 1}")
+                for t in img.tiles]
+    if img.source == "SEQUENCE":
+        folder, name = os.path.split(path)
+        m = re.match(r"(.*?)(\d+)(\D*)$", name)
+        if m:
+            head, tail = m.group(1), m.group(3)
+            frame = re.compile(re.escape(head) + r"\d+" + re.escape(tail) + "$")
+            try:
+                return sorted(os.path.join(folder, f) for f in os.listdir(folder) if frame.match(f)) or [path]
+            except OSError:
+                pass
+    return [path]
+
+
+def files_digest(paths):
+    if len(paths) == 1:
+        return file_digest(paths[0])
+    parts = [file_digest(p) for p in paths]
+    missing = sum(p == "missing file" for p in parts)
+    h = digest(*((os.path.basename(p), d) for p, d in zip(paths, parts)))  # names, not folders: the
+    # two versions usually sit in different folders
+    return f"{h} ({len(paths)} files{f', {missing} missing' if missing else ''})"
+
+
 def snap_image(img):
     f = {"source": img.source, "file": img.filepath or "—", "color space": img.colorspace_settings.name,
          "alpha": img.alpha_mode, "packed": fmt(bool(img.packed_file))}
     if img.packed_file:
-        f["content"] = digest(bytes(img.packed_file.data))
-    elif img.source in ("FILE", "SEQUENCE", "MOVIE") and img.filepath:
-        f["content"] = file_digest(image_path(img))
+        f["content"] = digest(*(bytes(pf.data) for pf in img.packed_files))
+    elif img.source in ("FILE", "SEQUENCE", "MOVIE", "TILED") and img.filepath:
+        f["content"] = files_digest(image_files(img))
     elif img.source == "GENERATED":
         f["generated"] = f"{img.generated_type} {img.generated_width}×{img.generated_height} {fmt(img.generated_color)}"
-    if img.has_data:
-        f["size"] = f"{img.size[0]}×{img.size[1]}"
+    # No pixel size: img.size is only known once Blender has loaded the pixels, which depends on what the
+    # viewport drew this session, so it showed as "1024×1024 → —" on untouched images. The content hash
+    # (or the generated size) already catches a resize.
     custom_props(img, f)
     return f
 
@@ -453,11 +537,12 @@ _preview_masters = set()  # top-level collections of runtime (preview) scenes: n
 def snapshot(owned):
     """{(cat, name): fields} for every ID for which owned(id) is true."""
     _preview_masters.clear()
+    _anim.clear()
     _preview_masters.update(s.collection.as_pointer() for s in bpy.data.scenes
                             if s.is_runtime_data and s.library is None)
     out = {}
     for cat, attr, _label, _icon in CATEGORIES:
-        for idb in getattr(bpy.data, attr):
+        for idb in list(getattr(bpy.data, attr)):  # a list: snap_mesh adds and removes a copy
             if not owned(idb):
                 continue
             try:

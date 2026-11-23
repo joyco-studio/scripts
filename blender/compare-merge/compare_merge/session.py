@@ -265,6 +265,9 @@ def compare(path, scene_name):
 
 def refresh_current():
     """Re-read the current file (after edits or a merge) and diff again; the incoming side is cached."""
+    for o in bpy.data.objects:  # edits made in Edit Mode only reach the mesh (or curve, armature) when
+        if o.mode == "EDIT" and is_current(o):  # Blender leaves it: write them there now
+            o.update_from_editmode()
     S.current_snap = snapshot.snapshot(lambda i: is_current(i) and not is_draft(i))
     S.entries = diff.diff(S.current_snap, S.incoming_snap, snapshot.CAT_ORDER)
     S.units = {}
