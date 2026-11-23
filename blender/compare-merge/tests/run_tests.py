@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.dirname(HERE))
 sys.path.insert(0, HERE)
 
 import fixtures  # noqa: E402
-from compare_merge import api, diff, preview, session as ses  # noqa: E402
+from compare_merge import api, apply, diff, preview, session as ses, snapshot  # noqa: E402
 from compare_merge.preview import View  # noqa: E402
 
 TMP = tempfile.mkdtemp(prefix="cm_test_")
@@ -695,7 +695,7 @@ def test_session_state():
     check(not drift, f"an identical copy diffs clean after scrubbing the timeline ({drift})")
     cur = ses.S.current_snap
     check(cur[("OBJECT", "Animated")]["location"] == snapshot.ANIMATED, "keyframed location reads animated")
-    check(cur[("OBJECT", "Driven")]["scale"] == snapshot.ANIMATED, "driven scale reads animated")
+    check(cur[("OBJECT", "Driven")]["scale"] == "(animated, 1, 1)", "driven scale.x reads animated")
     check(cur[("OBJECT", "Animated")]["custom › wobble"] == snapshot.ANIMATED, "keyframed custom property")
     check(cur[("MATERIAL", "KeyedMat")]["Principled BSDF › Roughness"] == snapshot.ANIMATED, "keyframed node input")
     check(cur[("LIGHT", "KeyedLamp")]["energy"] == snapshot.ANIMATED, "keyframed light energy")
@@ -726,6 +726,35 @@ def test_session_state():
     api.close()
 
 
+ACUR = os.path.join(TMP, "animation", "final", "scene.blend")
+AINC = os.path.join(TMP, "animation", "artist", "scene.blend")
+
+
+def test_animation_review():
+    """Packed images hash their bytes; a keyframe hides only its own component; drivers show anywhere."""
+    print("animation review")
+    fixtures.build_animation_review("incoming", AINC)
+    fixtures.build_animation_review("current", ACUR)
+    bpy.ops.wm.open_mainfile(filepath=ACUR)
+    api.start(AINC)
+    cur, inc = ses.S.current_snap, ses.S.incoming_snap
+    content = cur[("IMAGE", "Packed")].get("content", "")
+    check(content.startswith("#"), f"packed image hashed ({cur[('IMAGE', 'Packed')]})")
+    check(changed_fields("IMAGE", "Packed") == ["content"], "different packed images differ in content")
+    check(status("IMAGE", "SamePacked") == diff.SAME, "identical packed images match")
+    check((cur[("OBJECT", "PartKeyed")]["location"], inc[("OBJECT", "PartKeyed")]["location"]) ==
+          ("(animated, 1, 0)", "(animated, 2, 0)"), f"only the keyed component reads animated "
+          f"({cur[('OBJECT', 'PartKeyed')]['location']})")
+    check(changed_fields("OBJECT", "PartKeyed") == ["location"], "a change to an unkeyed component shows")
+    check(cur[("LIGHT", "DrivenLamp")]["energy"] == snapshot.ANIMATED, "driven light energy reads animated")
+    check("drivers" in changed_fields("LIGHT", "DrivenLamp"), "a light driver's expression change shows")
+    check("node tree drivers" in changed_fields("MATERIAL", "DrivenMat"), "a node driver's target change shows")
+    for cat, name, field in (("LIGHT", "DrivenLamp", "drivers"), ("MATERIAL", "DrivenMat", "node tree drivers")):
+        u = next((u for u in apply.units(entry(cat, name)) if field in [f for f, _a, _b in u.fields]), None)
+        check(u is not None and u.locked, f"{name}: drivers come with the whole row")
+    api.close()
+
+
 def main():
     fixtures.build("incoming", INC)
     fixtures.build("current", CUR)
@@ -736,7 +765,7 @@ def main():
     bpy.ops.wm.open_mainfile(filepath=CUR)
     for t in (test_image_snapshot_ignores_loaded_pixels, test_diff, test_preview_is_safe, test_views, test_merge, test_close, test_review,
               test_failed_merge_rolls_back, test_scene_rename, test_operator_undo, test_units, test_units_merge,
-              test_units_undo, test_session_state):
+              test_units_undo, test_session_state, test_animation_review):
         try:
             t()
         except Exception:

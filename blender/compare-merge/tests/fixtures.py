@@ -374,3 +374,40 @@ def build_session_state(path):
 
     sc.frame_set(1)
     bpy.ops.wm.save_as_mainfile(filepath=path)
+
+
+def build_animation_review(variant, path):
+    """Packed images, partly keyframed values and drivers outside objects (run_tests.test_animation_review)."""
+    inc = variant == "incoming"
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    sc = bpy.context.scene
+    tex = os.path.join(os.path.dirname(path), "textures")
+    os.makedirs(tex, exist_ok=True)
+    for name, color in (("Packed", (0, 0, 1, 1) if inc else (1, 0, 0, 1)), ("SamePacked", (0, 1, 0, 1))):
+        p = os.path.join(tex, f"{name}.png")
+        write_png(p, color)
+        img = bpy.data.images.load(p)
+        img.name = name
+        img.pack()
+        img.use_fake_user = True
+
+    part = bpy.data.objects.new("PartKeyed", None)  # only location.x keyframed; y differs
+    sc.collection.objects.link(part)
+    part.keyframe_insert("location", index=0, frame=1)
+    part.location = (3, 2 if inc else 1, 0)
+    part.keyframe_insert("location", index=0, frame=10)
+
+    lamp = bpy.data.lights.new("DrivenLamp", "POINT")
+    sc.collection.objects.link(bpy.data.objects.new("DrivenLamp", lamp))
+    lamp.driver_add("energy").driver.expression = "20" if inc else "10"
+
+    mat = bpy.data.materials.new("DrivenMat")
+    mat.use_fake_user = True
+    rough = next(n for n in mat.node_tree.nodes if n.type == "BSDF_PRINCIPLED").inputs["Roughness"]
+    d = rough.driver_add("default_value").driver
+    d.type = "SCRIPTED"
+    v = d.variables.new()
+    v.targets[0].id = part
+    v.targets[0].data_path = "location.y" if inc else "location.z"
+    d.expression = v.name
+    bpy.ops.wm.save_as_mainfile(filepath=path)

@@ -118,40 +118,105 @@ def read(coll, key, n, comps=1, dtype=np.float32):
 # value it was saved with. Such fields read ANIMATED instead and the action's hash catches real changes.
 
 ANIMATED = "animated"
-_anim = {}  # id_data pointer -> data paths keyframed or driven on it; cleared for every snapshot
+_anim = {}  # id_data pointer -> {data path: array indices keyframed or driven}; cleared for every snapshot
+_UNSET = object()
 
 
 def anim_paths(idb):
     key = idb.as_pointer()
     if key not in _anim:
-        paths = set()
+        paths = {}
         ad = getattr(idb, "animation_data", None)
         if ad:
-            paths = {d.data_path for d in ad.drivers}
+            curves = list(ad.drivers)
             acts = [(ad.action, getattr(ad, "action_slot", None))]
             acts += [(st.action, getattr(st, "action_slot", None)) for tr in ad.nla_tracks for st in tr.strips]
             for act, slot in acts:
                 if act:
                     sid = slot.identifier if slot else None
-                    paths |= {fc.data_path for s, fc in iter_fcurves(act) if not (s and sid and s != sid)}
+                    curves += [fc for s, fc in iter_fcurves(act) if not (s and sid and s != sid)]
+            for fc in curves:
+                paths.setdefault(fc.data_path, set()).add(fc.array_index)
         _anim[key] = paths
     return _anim[key]
 
 
 def animated(struct, prop):
-    """True when `prop` of `struct` (any struct inside an ID) is keyframed or driven."""
+    """Array indices of `prop` of `struct` (any struct inside an ID) that are keyframed or driven."""
     paths = anim_paths(struct.id_data)
     if not paths:
-        return False
+        return set()
     try:
-        return struct.path_from_id(prop) in paths
+        return paths.get(struct.path_from_id(prop), set())
     except (ValueError, TypeError):
-        return False
+        return set()
 
 
-def value(struct, prop, v=None):
-    """fmt() of struct.prop, or ANIMATED."""
-    return ANIMATED if animated(struct, prop) else fmt(getattr(struct, prop) if v is None else v)
+def masked(v, idx, whole=fmt, comp=fmt):
+    """whole(v), with the components at array indices `idx` reading ANIMATED: when only location.x
+    is keyframed, a change to y still shows."""
+    if not idx:
+        return whole(v)
+    if isinstance(v, str) or not hasattr(v, "__len__") or len(v) < 2 or len(idx) >= len(v):
+        return ANIMATED
+    return "(" + ", ".join(ANIMATED if i in idx else comp(c) for i, c in enumerate(v)) + ")"
+
+
+def value(struct, prop, v=_UNSET, whole=fmt, comp=fmt):
+    """fmt() of struct.prop, its keyframed or driven components reading ANIMATED."""
+    return masked(getattr(struct, prop) if v is _UNSET else v, animated(struct, prop), whole, comp)
+
+
+def deg(a):
+    return f"{fnum(math.degrees(a))}°"
+
+
+def fcurve_digest(fc):
+    """Keyframes, handles, interpolation, extrapolation and modifiers of an F-curve."""
+    kp = fc.keyframe_points
+    n = len(kp)
+    mods = []
+    for m in fc.modifiers:  # Noise, Cycles, ...: their settings change the motion too
+        sub = {}
+        rna_fields(m, "", sub, depth=1)
+        mods.append((m.type, sorted(sub.items())))
+    return digest(read(kp, "co", n, 2), read(kp, "handle_left", n, 2), read(kp, "handle_right", n, 2),
+                  [(k.interpolation, k.easing) for k in kp], fc.extrapolation, mods)
+
+
+def driver_digest(ad):
+    """Every driver of an animation_data: what it drives, its expression, its variables and their
+    targets, and its own F-curve. Driven values read ANIMATED, so this is where their changes show."""
+    out = []
+    for fc in ad.drivers:
+        d = fc.driver
+        variables = [(v.name, v.type, [(fmt(t.id), t.id_type, t.data_path, t.bone_target, t.transform_type,
+                                        t.transform_space, t.rotation_mode) for t in v.targets])
+                     for v in d.variables]
+        out.append((fc.data_path, fc.array_index, d.type, d.expression, d.use_self, variables, fcurve_digest(fc)))
+    return digest(sorted(out, key=lambda x: (x[0], x[1])))
+
+
+# Keyframes and drivers of an ID and of the IDs embedded in it (a material's node tree, a mesh's
+# shape keys): (field prefix, the ID or None). Values they animate read ANIMATED; these fields show
+# what animates them.
+def anim_owners(idb):
+    return (("", idb), ("node tree ", getattr(idb, "node_tree", None)), ("shape keys ", getattr(idb, "shape_keys", None)))
+
+
+ANIM_FIELDS = {f"{p}{k}" for p, _o in anim_owners(None) for k in ("drivers", "action")} - {"action"}
+
+
+def anim_fields(idb, out):
+    for prefix, owner in anim_owners(idb):
+        ad = getattr(owner, "animation_data", None) if owner is not None else None
+        if not ad:
+            continue
+        if ad.drivers:
+            out[f"{prefix}drivers"] = driver_digest(ad)
+        if prefix and ad.action:  # an ID's own action is listed already (object: "action", others: rna)
+            slot = getattr(ad, "action_slot", None)
+            out[f"{prefix}action"] = ad.action.name + (f" ({slot.identifier})" if slot else "")
 
 
 # ---------------------------------------------------------------------------------------------- generic RNA
@@ -191,7 +256,7 @@ def custom_props(idb, out):
     for k in idb.keys():
         if k.startswith("_") or k in ("cycles", "cm_draft") or k.startswith("tc_"):
             continue
-        out[f"custom › {k}"] = ANIMATED if f'["{k}"]' in anim_paths(idb) else fmt(idb[k])
+        out[f"custom › {k}"] = masked(idb[k], anim_paths(idb).get(f'["{k}"]'))
 
 
 def node_values(node):
@@ -253,11 +318,11 @@ def snap_object(o):
     elif mode == "AXIS_ANGLE":
         f["rotation"] = value(o, "rotation_axis_angle", tuple(o.rotation_axis_angle))
     else:
-        f["rotation"] = ANIMATED if animated(o, "rotation_euler") else fdeg(o.rotation_euler)
+        f["rotation"] = value(o, "rotation_euler", whole=fdeg, comp=deg)
     f["rotation mode"] = mode
     f["scale"] = value(o, "scale")
     f["delta location"] = value(o, "delta_location")
-    f["delta rotation"] = ANIMATED if animated(o, "delta_rotation_euler") else fdeg(o.delta_rotation_euler)
+    f["delta rotation"] = value(o, "delta_rotation_euler", whole=fdeg, comp=deg)
     f["delta scale"] = value(o, "delta_scale")
     f["hide in renders"] = value(o, "hide_render")
     f["disabled in viewports"] = value(o, "hide_viewport")
@@ -282,11 +347,9 @@ def snap_object(o):
         slot = getattr(ad, "action_slot", None)
         if slot:
             f["action slot"] = slot.identifier
-        if ad.drivers:
-            f["drivers"] = digest(sorted((d.data_path, d.array_index, d.driver.expression) for d in ad.drivers))
     if o.pose:
-        f["pose"] = digest([(b.name, *(ANIMATED if animated(b, p) else tuple(getattr(b, p))
-                                       for p in ("location", "rotation_quaternion", "rotation_euler", "scale")))
+        f["pose"] = digest([(b.name, *(value(b, p) for p in ("location", "rotation_quaternion", "rotation_euler",
+                                                               "scale")))
                             for b in o.pose.bones])
     custom_props(o, f)
     return f
@@ -411,7 +474,7 @@ def snap_image(img):
     f = {"source": img.source, "file": img.filepath or "—", "color space": img.colorspace_settings.name,
          "alpha": img.alpha_mode, "packed": fmt(bool(img.packed_file))}
     if img.packed_file:
-        f["content"] = digest(*(bytes(pf.data) for pf in img.packed_files))
+        f["content"] = digest(*(bytes(pf.packed_file.data) for pf in img.packed_files))
     elif img.source in ("FILE", "SEQUENCE", "MOVIE", "TILED") and img.filepath:
         f["content"] = files_digest(image_files(img))
     elif img.source == "GENERATED":
@@ -438,16 +501,8 @@ def iter_fcurves(act):
 def snap_action(act):
     f = {"frame range": fmt(tuple(act.frame_range))}
     for slot, fc in iter_fcurves(act):
-        kp = fc.keyframe_points
-        n = len(kp)
-        mods = []
-        for m in fc.modifiers:  # Noise, Cycles, ...: their settings change the motion too
-            sub = {}
-            rna_fields(m, "", sub, depth=1)
-            mods.append((m.type, sorted(sub.items())))
-        h = digest(read(kp, "co", n, 2), read(kp, "handle_left", n, 2), read(kp, "handle_right", n, 2),
-                   [(k.interpolation, k.easing) for k in kp], fc.extrapolation, mods)
-        f[f"curve {slot + ' ' if slot else ''}{fc.data_path}[{fc.array_index}]"] = f"{n} keys {h}"
+        f[f"curve {slot + ' ' if slot else ''}{fc.data_path}[{fc.array_index}]"] = \
+            f"{len(fc.keyframe_points)} keys {fcurve_digest(fc)}"
     custom_props(act, f)
     return f
 
@@ -546,7 +601,8 @@ def snapshot(owned):
             if not owned(idb):
                 continue
             try:
-                out[(cat, idb.name)] = SNAPPERS[cat](idb)
+                out[(cat, idb.name)] = fields = SNAPPERS[cat](idb)
+                anim_fields(idb, fields)
             except Exception as e:  # never let one odd data-block hide the rest of the diff
                 out[(cat, idb.name)] = {"error": f"could not read: {e}"}
     return out
@@ -578,6 +634,8 @@ MESH_TOPOLOGY = {"vertices", "edges", "faces", "topology"}
 def unit_key(cat, field, nodes=()):
     """(unit key, label) of a changed field. `nodes`: node names of a material / world (its fields
     start with one). Fields nothing knows how to copy on their own get a "field:" unit (locked)."""
+    if cat != "OBJECT" and field in ANIM_FIELDS:  # drivers and embedded actions: the whole row
+        return f"field:{field}", field
     if field.startswith("custom › "):
         k = field[len("custom › "):]
         return f"custom:{k}", f"Custom property {k}"
