@@ -1,6 +1,6 @@
 {
   "name": "compare-merge",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "private": true,
   "description": "Blender extension: diff two versions of a .blend, preview either version of every change and merge the ones you pick",
   "blender": {
