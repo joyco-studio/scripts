@@ -7,7 +7,7 @@
       "id": "compare_merge",
       "name": "Compare & Merge",
       "tagline": "Diff two versions of a .blend, preview them and merge",
-      "version": "0.3.1",
+      "version": "0.3.2",
       "type": "add-on",
       "maintainer": "JOYCO",
       "license": [
@@ -22,9 +22,9 @@
         "Import-Export",
         "Pipeline"
       ],
-      "archive_url": "./compare_merge-0.3.1.zip",
-      "archive_size": 48777,
-      "archive_hash": "sha256:a2e1a3bd389cd740f8494d6ca4fa6e12a4de973fa71753ec79402cd86364bbf0"
+      "archive_url": "./compare_merge-0.3.2.zip",
+      "archive_size": 50899,
+      "archive_hash": "sha256:0fbb043ba0a263dd5b76c211c11dd63102a0276d979c4b6499f61e1907f082cc"
     },
     {
       "schema_version": "1.0.0",
