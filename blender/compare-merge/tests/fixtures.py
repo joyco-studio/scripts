@@ -475,6 +475,10 @@ def build_robustness(variant, path, shared_texture):
     img.name = "Shared"
     img.filepath = "//" + os.path.relpath(shared_texture, folder)  # ../shared or ../../shared
     img.use_fake_user = True
+    win = bpy.data.images.load(shared_texture)  # as a file saved on Windows stores it: backslashes
+    win.name = "WinPath"
+    win.filepath = "//" + os.path.relpath(shared_texture, folder).replace("/", "\\" if inc else "/")
+    win.use_fake_user = True
 
     glass = bpy.data.materials.new("Glass")
     glass.diffuse_color = (0.2, 0.4, 1, 0.3)  # unlike ChainMat: identical data-blocks can't be paired

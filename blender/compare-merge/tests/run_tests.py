@@ -787,6 +787,9 @@ def test_robustness():
           f"({changed_fields('OBJECT', 'PanelOnly')})")
     check(status("IMAGE", "Shared") == diff.SAME, f"same texture by another relative path "
           f"({changed_fields('IMAGE', 'Shared')})")
+    check(status("IMAGE", "WinPath") == diff.SAME and "missing" not in ses.S.incoming_snap[("IMAGE", "WinPath")]["content"],
+          f"a path saved on Windows (backslashes) is read ({changed_fields('IMAGE', 'WinPath')}, "
+          f"{ses.S.incoming_snap[('IMAGE', 'WinPath')]['content']})")
     renamed = sorted((e.cat, e.current, e.incoming) for e in ses.S.entries if e.status == diff.RENAMED)
     renamed = [r for r in renamed if r[0] != "NODETREE"]
     check(renamed == [("MATERIAL", "ChainMat", "ChainMat2"),

@@ -502,7 +502,15 @@ def file_digest(path):
 
 
 def image_path(img):
-    return os.path.normpath(bpy.path.abspath(img.filepath, library=img.library)) if img.filepath else ""
+    """Absolute path of an image's file. A .blend saved on Windows keeps backslashes (`//..\\textures\\a.png`,
+    `C:\\Users\\...`), which only Windows reads as separators: elsewhere they would make the whole path one
+    file name, and the file unreadable."""
+    path = img.filepath
+    if not path:
+        return ""
+    if os.sep == "/":
+        path = path.replace("\\", "/")
+    return os.path.normpath(bpy.path.abspath(path, library=img.library))
 
 
 def image_files(img):
