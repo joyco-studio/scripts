@@ -1,5 +1,23 @@
 # compare-merge
 
+## 0.3.1
+
+### Patch Changes
+
+- 4c70a87: Follow-up fixes to comparing what the files hold:
+
+  - Packed images are compared again. Since the last release every packed image failed to read ("could not read"), so two different packed textures looked identical.
+  - Only the keyframed components of a value read `animated`: with just location X keyed, a change to Y or Z still shows, as `(animated, 1, 0)`.
+  - Drivers show on every row, not only on objects: their expression, variables and targets are compared for lights, cameras, materials and worlds (also drivers inside the node tree), meshes (shape key drivers) and the rest. The action of a material's node tree or of a mesh's shape keys is listed too. These come with the whole row when merging.
+  - A muted driver, keyframe curve or NLA strip no longer hides the value it would animate: the saved value is compared, and muting or unmuting a driver shows as a driver change.
+
+- fc37002: The diff now reads only what the files hold, not what this Blender session did to the open one:
+
+  - Images no longer show as changed when only their pixel size differs as "1024×1024 → —". The size was only known for images Blender had loaded (ones the viewport drew). The content hash still catches real pixel changes, including a resize.
+  - Keyframed and driven values (object transforms, pose bones, node inputs, light and camera settings, shape key values, custom properties) show as `animated` instead of the value at the playhead, which made every animated object look changed after scrubbing the timeline. Changes to the animation show on the action.
+  - Meshes in Edit Mode are compared with their unsaved edits. Before, a moved vertex was missed and the mesh showed fake topology and attribute changes.
+  - UDIM images hash every tile and image sequences every frame. Before, UDIM images had no content hash at all and sequences hashed only their first frame, so a repainted tile or frame went unnoticed.
+
 ## 0.3.0
 
 ### Minor Changes
