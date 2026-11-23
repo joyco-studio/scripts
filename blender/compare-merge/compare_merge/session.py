@@ -26,7 +26,9 @@ class State:
         self.scene = ""  # name of the scene being previewed
         self.scene_names = set()  # every name it had during the comparison (a merged rename, then undo)
         self.entries = []  # [diff.Entry], same order as the sidebar rows
-        self.incoming_snap = {}
+        self.incoming_snap = {}  # read with the incoming file's renames mapped (see rediff)
+        self.incoming_raw = {}  # read as it is
+        self.incoming_renamed = {}  # renames -> incoming snapshot read with them (the file doesn't change)
         self.current_snap = {}
         self.index_cur = {}  # (cat, current name) -> entry index
         self.index_inc = {}  # (cat, incoming name) -> entry index
@@ -258,7 +260,8 @@ def compare(path, scene_name):
     if library() is not None:
         unlink()
     link(path, scenes=True)
-    S.incoming_snap = snapshot.snapshot(lambda i: is_incoming(i))
+    S.incoming_raw = S.incoming_snap = snapshot.snapshot(lambda i: is_incoming(i))
+    S.incoming_renamed = {}
     drop_linked_scenes()
     refresh_current()
 
@@ -269,10 +272,58 @@ def refresh_current():
         if o.mode == "EDIT" and is_current(o):  # Blender leaves it: write them there now
             o.update_from_editmode()
     S.current_snap = snapshot.snapshot(lambda i: is_current(i) and not is_draft(i))
-    S.entries = diff.diff(S.current_snap, S.incoming_snap, snapshot.CAT_ORDER)
+    rediff()
     S.units = {}
     S.index_cur = {(e.cat, e.current): i for i, e in enumerate(S.entries) if e.current}
     S.index_inc = {(e.cat, e.incoming): i for i, e in enumerate(S.entries) if e.incoming}
+
+
+def rediff():
+    """Diff, then diff again with what the incoming file renamed read under its current name, until the
+    renames found stop changing. Everything refers to other IDs by name (a material slot, a collection's
+    objects), so without this one renamed material also changes every object and mesh using it. Each
+    round can find more: a renamed mesh only matches once its renamed material does, and nested node
+    groups take a round per level. Stops when a round finds nothing new, or finds a mapping already
+    tried (renames that would only flip between two answers), which also guarantees it ends."""
+    renames, tried = {}, set()
+    while True:
+        tried.add(frozenset(renames.items()))
+        inc = incoming_with(renames)
+        entries = diff.diff(S.current_snap, inc, snapshot.CAT_ORDER)
+        found = {(e.cat, e.incoming): e.current for e in entries if e.status == diff.RENAMED}
+        if found == renames or frozenset(found.items()) in tried:
+            break
+        renames = found
+    S.incoming_snap, S.entries = inc, entries
+
+
+def incoming_with(renames):
+    """The incoming snapshot with the IDs in `renames` ({(cat, incoming name): current name}) referred
+    to by their current names."""
+    if not renames:
+        return S.incoming_raw
+    key = frozenset(renames.items())
+    lib = library()
+    if lib is None:  # not linked (mid-merge): nothing to read the incoming IDs from
+        return S.incoming_raw
+    if key not in S.incoming_renamed:
+
+        def name(idb):
+            return renames.get((cat_of(idb), idb.name), idb.name) if idb.library == lib else idb.name
+        snap = snapshot.snapshot(lambda i: is_incoming(i, lib) and not isinstance(i, bpy.types.Scene), name)
+        for k, fields in S.incoming_raw.items():  # scenes were read once (compare); remap what they name
+            if k[0] == "OBJECT" and "collections" in snap.get(k, {}):
+                # the scenes' own collections went with them: rebuild from what compare() read
+                members = S.incoming_members.get(k[1], [])
+                snap[k]["collections"] = ", ".join(sorted(
+                    n if master else renames.get(("COLLECTION", n), n) for master, n in members)) or "—"
+            elif k[0] == "SCENE":
+                snap[k] = dict(fields)
+                for field, cat in (("camera", "OBJECT"), ("world", "WORLD")):
+                    if field in fields:
+                        snap[k][field] = renames.get((cat, fields[field]), fields[field])
+        S.incoming_renamed[key] = snap
+    return S.incoming_renamed[key]
 
 
 def close_library():

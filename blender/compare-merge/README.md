@@ -2,7 +2,7 @@
 
 Blender extension for diffing two versions of a `.blend` and merging the changes you pick, git-style. Built for the "artist's copy vs. final file" flow: open the final file, point the tool at the artist's version, look at every difference, preview either version of anything in the viewport and merge only what you want.
 
-It compares everything a glTF export is made of: objects (transforms, parenting, modifiers, constraints, material slots, collections, custom properties/extras), meshes (geometry, topology, UV maps, attributes, shape keys, weights), materials and node groups (node by node, every input, every link), images (file contents, including every UDIM tile and sequence frame, packed data, color space), cameras, lights, actions (every keyframe), armatures, curves/text, worlds, collections and scene settings (camera, frame range, fps).
+It compares everything a glTF export is made of: objects (transforms, parenting, modifiers and their Geometry Nodes inputs, constraints, material slots, collections, custom properties/extras), meshes (geometry, topology, UV maps, attributes, shape keys, weights), materials and node groups (node by node, every input and setting, every link), images (file name and contents, including every UDIM tile and sequence frame, packed data, color space), cameras, lights, actions (every keyframe), armatures, curves/text, worlds, collections and scene settings (camera, frame range, fps).
 
 ## Install
 
@@ -73,10 +73,12 @@ Exit code: 0 identical, 1 error, 2 the files differ (like `git diff --exit-code`
 - Two-way diff: without a common ancestor the tool can't tell which side changed something, only that it differs. A three-way mode (pick a base file, auto-take one-sided changes, flag conflicts) is the natural next step.
 - Field picks need the same structure on both sides. Whole row only: a mesh whose topology differs (vertex, edge or face count, or vertex order: UVs and positions only fit their own geometry), vertex weights and vertex groups, a material or world whose node wiring changed (links, sockets, nodes added or removed), an object whose modifier or constraint stack changed (added, removed, reordered or retyped; their other units stay pickable), drivers, list values (color ramp stops, constraint targets…), a node input that only one side's node settings show, and object type changes. Images, actions, node groups, armatures, curves, collections and scene settings are always whole rows.
 - Node inputs and settings are picked one by one rather than per node: with the wiring unchanged, any combination is a valid tree.
-- Entities are matched by name; renames are detected only when the content is identical.
+- Entities are matched by name; renames are detected only when the content is identical. What refers to a renamed data-block (material slots, a mesh's materials, a collection's objects…) reads it under its current name, so a rename is one row, not one per user.
+- Images are compared by file name and content, not folder: the two files can sit in different folders and reach the same texture by different relative paths, or each have their own copy of it.
 - Data linked into either file from other libraries is not compared.
 - The preview swaps picked images and node groups inside materials and Geometry Nodes modifiers, but not images or groups nested inside other node groups.
 - Vertex weights are compared on meshes up to 100k vertices (no bulk API for them).
+- Open issues found on a production file (NLA, collections, vertex group renames…) are in [KNOWN-ISSUES.md](KNOWN-ISSUES.md).
 - A keyframed or driven value shows as `animated` rather than its number: Blender writes the current frame's value onto the open file, so the number would only say where the playhead is. Changes to the animation show on the action (or the driver).
 
 ## Files

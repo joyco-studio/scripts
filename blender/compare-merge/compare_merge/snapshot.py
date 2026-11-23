@@ -44,13 +44,18 @@ SKIP = {
     "session_uid", "is_evaluated", "is_embedded_data", "is_missing", "is_editable", "is_library_indirect",
     "id_type", "is_linked_packed", "deep_hash", "bl_idname", "bl_label", "bl_description", "bl_icon",
     "preview_render_type", "use_preview_world", "pass_index", "line_color", "line_priority", "is_dirty",
-    "is_float", "has_data", "bindcode", "filepath_raw", "users_collection",
+    "is_float", "has_data", "bindcode", "filepath_raw", "users_collection", "node_warnings",
 }
 # Node editor layout (where a node sits, how it looks); sockets and links are read separately.
 NODE_SKIP = SKIP | {"location", "location_absolute", "width", "height", "select", "hide", "color", "use_custom_color",
                     "label", "parent", "warning_propagation", "dimensions", "inputs", "outputs", "internal_links"}
 SKIP_PREFIX = ("bl_", "show_", "active_", "paint_", "lock_", "is_", "use_pin", "cycles", "texel_coverage",
-               "compare_merge")
+               "compare_merge", "open_")  # open_*: a panel open in the modifier UI
+KEEP = {"show_viewport", "show_render"}  # a modifier's toggles: they decide whether it is applied on export
+
+
+def skipped(ident, skip=SKIP):
+    return ident in skip or (ident.startswith(SKIP_PREFIX) and ident not in KEEP)
 
 
 # ---------------------------------------------------------------------------------------------- formatting
@@ -76,7 +81,7 @@ def fmt(v):
     if isinstance(v, (int, str)):
         return str(v)
     if isinstance(v, bpy.types.ID):
-        return v.name
+        return ref(v)
     if isinstance(v, Matrix):
         return "(" + ", ".join(fnum(x) for row in v for x in row) + ")"
     if isinstance(v, (Vector, Euler, Quaternion, Color)):
@@ -91,6 +96,15 @@ def fmt(v):
         return "(" + ", ".join(fmt(x) for x in v) + ")"
     except TypeError:
         return str(v)
+
+
+_rename = None  # set by snapshot(): how this snapshot names the IDs it refers to
+
+
+def ref(idb):
+    """Name of an ID another one refers to. The incoming side is re-read with the IDs it renamed under
+    their current names (session.rediff), so a renamed material doesn't change every slot using it."""
+    return _rename(idb) if _rename is not None else idb.name
 
 
 def digest(*parts):
@@ -218,16 +232,18 @@ def anim_fields(idb, out):
             out[f"{prefix}drivers"] = driver_digest(ad)
         if prefix and ad.action:  # an ID's own action is listed already (object: "action", others: rna)
             slot = getattr(ad, "action_slot", None)
-            out[f"{prefix}action"] = ad.action.name + (f" ({slot.identifier})" if slot else "")
+            out[f"{prefix}action"] = ref(ad.action) + (f" ({slot.identifier})" if slot else "")
 
 
 # ---------------------------------------------------------------------------------------------- generic RNA
 
-def rna_fields(struct, prefix, out, depth=0, skip=SKIP):
-    """Every editable property of `struct`; owned sub-structs recurse, nested collections hash."""
+def rna_fields(struct, prefix, out, depth=0, skip=SKIP, runtime=False):
+    """Every editable property of `struct`; owned sub-structs recurse, nested collections hash.
+    runtime: also read properties defined at runtime. Add-ons register theirs that way (skipped), but so
+    does Blender for Geometry Nodes nodes (a Boolean Math's operation) and modifier inputs."""
     for p in struct.bl_rna.properties:
         ident = p.identifier
-        if ident in skip or ident.startswith(SKIP_PREFIX) or getattr(p, "is_runtime", False):
+        if skipped(ident, skip) or (getattr(p, "is_runtime", False) and not runtime):
             continue
         try:
             v = getattr(struct, ident)
@@ -238,7 +254,7 @@ def rna_fields(struct, prefix, out, depth=0, skip=SKIP):
             if isinstance(v, bpy.types.ID) or (v is None and not p.is_readonly):
                 out[key] = fmt(v)
             elif v is not None and p.is_readonly and depth < 2:
-                rna_fields(v, key + ".", out, depth + 1, skip)
+                rna_fields(v, key + ".", out, depth + 1, skip, runtime)
             elif v is not None and hasattr(v, "name"):
                 out[key] = str(v.name)
         elif p.type == "COLLECTION":
@@ -246,7 +262,7 @@ def rna_fields(struct, prefix, out, depth=0, skip=SKIP):
                 items = []
                 for item in v:
                     sub = {}
-                    rna_fields(item, "", sub, depth + 1, skip)
+                    rna_fields(item, "", sub, depth + 1, skip, runtime)
                     items.append(sorted(sub.items()))
                 out[key] = f"{len(items)} items {digest(items)}"
         elif not p.is_readonly:
@@ -286,7 +302,7 @@ def node_tree_fields(nt, out, prefix=""):
         out[f"{n} · type"] = node.bl_idname
         if node.mute:
             out[f"{n} · muted"] = "on"
-        rna_fields(node, f"{n} · ", out, depth=1, skip=NODE_SKIP)
+        rna_fields(node, f"{n} · ", out, depth=1, skip=NODE_SKIP, runtime=True)
         for label, sock in node_values(node).items():
             out[f"{n} › {label}"] = value(sock, "default_value")
     for link in nt.links:
@@ -301,6 +317,52 @@ def node_tree_fields(nt, out, prefix=""):
         for item in nt.interface.items_tree:
             if item.item_type == "SOCKET":
                 out[f"{prefix}interface {item.in_out.lower()} {item.name}"] = item.socket_type
+
+
+# ---------------------------------------------------------------------------------------------- modifier inputs
+
+def gn_inputs(mod):
+    """[(label, identifier)] of the inputs a Geometry Nodes modifier shows (geometry sockets hold no value).
+    A repeated name gets " 2", " 3"..."""
+    ng = getattr(mod, "node_group", None) if mod.type == "NODES" else None
+    if ng is None:
+        return []
+    out, seen = [], {}
+    for item in ng.interface.items_tree:
+        if item.item_type != "SOCKET" or item.in_out != "INPUT" or item.socket_type == "NodeSocketGeometry":
+            continue
+        seen[item.name] = seen.get(item.name, 0) + 1
+        out.append((item.name if seen[item.name] == 1 else f"{item.name} {seen[item.name]}", item.identifier))
+    return out
+
+
+def gn_input(mod, ident):
+    """The struct holding one input of a Geometry Nodes modifier (properties.inputs, Blender 5.3), or
+    None (older versions keep them as ID properties of the modifier)."""
+    inputs = getattr(getattr(mod, "properties", None), "inputs", None)
+    return getattr(inputs, ident, None) if inputs is not None else None
+
+
+def gn_input_fields(mod, prefix, out):
+    """One field per modifier input: its value, or the attribute / layer it reads instead."""
+    for label, ident in gn_inputs(mod):
+        st = gn_input(mod, ident)
+        if st is not None:
+            sub = {}
+            rna_fields(st, "", sub, depth=1, runtime=True)
+            v = sub.get("value", "")
+            kind = sub.get("type", "VALUE")
+        else:
+            try:
+                raw = mod[ident]
+            except (KeyError, TypeError):
+                continue
+            v = masked(raw, anim_paths(mod.id_data).get(f'modifiers["{mod.name}"]["{ident}"]'))
+            kind = "ATTRIBUTE" if mod.get(f"{ident}_use_attribute") else "VALUE"
+            sub = {"attribute_name": str(mod.get(f"{ident}_attribute_name", ""))}
+        if kind != "VALUE":
+            v = f"{kind.lower()} {sub.get('attribute_name') or sub.get('layer_name') or ''}".rstrip()
+        out[f"{prefix}input {label}"] = v
 
 
 # ---------------------------------------------------------------------------------------------- per type
@@ -328,7 +390,7 @@ def snap_object(o):
     f["delta scale"] = value(o, "delta_scale")
     f["hide in renders"] = value(o, "hide_render")
     f["disabled in viewports"] = value(o, "hide_viewport")
-    f["collections"] = ", ".join(sorted(c.name for c in o.users_collection
+    f["collections"] = ", ".join(sorted(ref(c) for c in o.users_collection
                                         if c.as_pointer() not in _preview_masters)) or "—"
     if o.instance_type != "NONE":
         f["instancing"] = o.instance_type
@@ -340,6 +402,7 @@ def snap_object(o):
     for i, mod in enumerate(o.modifiers):
         f[f"modifier {i + 1}"] = f"{mod.name} ({mod.type})"
         rna_fields(mod, f"modifier {mod.name} · ", f, depth=1)
+        gn_input_fields(mod, f"modifier {mod.name} · ", f)
     for i, con in enumerate(o.constraints):
         f[f"constraint {i + 1}"] = f"{con.name} ({con.type})"
         rna_fields(con, f"constraint {con.name} · ", f, depth=1)
@@ -462,6 +525,14 @@ def image_files(img):
     return [path]
 
 
+def file_name(img):
+    """The name of the file an image reads (its folder isn't compared). Two versions of a .blend often
+    sit in different folders, so the same file is reached by different relative paths, or each has its
+    own copy of the textures; the content hash reads the bytes wherever they are. The name is what a
+    glTF export calls the texture, so a relink to another file shows."""
+    return os.path.basename(image_path(img)) or "—"
+
+
 def files_digest(paths):
     if len(paths) == 1:
         return file_digest(paths[0])
@@ -473,7 +544,7 @@ def files_digest(paths):
 
 
 def snap_image(img):
-    f = {"source": img.source, "file": img.filepath or "—", "color space": img.colorspace_settings.name,
+    f = {"source": img.source, "file": file_name(img), "color space": img.colorspace_settings.name,
          "alpha": img.alpha_mode, "packed": fmt(bool(img.packed_file))}
     if img.packed_file:
         f["content"] = digest(*(bytes(pf.packed_file.data) for pf in img.packed_files))
@@ -565,8 +636,8 @@ def snap_node_group(nt):
 
 
 def snap_collection(c):
-    return {"objects": ", ".join(sorted(o.name for o in c.objects)) or "—",
-            "children": ", ".join(sorted(ch.name for ch in c.children)) or "—",
+    return {"objects": ", ".join(sorted(ref(o) for o in c.objects)) or "—",
+            "children": ", ".join(sorted(ref(ch) for ch in c.children)) or "—",
             "hide in renders": fmt(c.hide_render), "disabled in viewports": fmt(c.hide_viewport),
             "instance offset": fmt(c.instance_offset)}
 
@@ -591,8 +662,18 @@ SNAPPERS = {
 _preview_masters = set()  # top-level collections of runtime (preview) scenes: not part of the file
 
 
-def snapshot(owned):
-    """{(cat, name): fields} for every ID for which owned(id) is true."""
+def snapshot(owned, rename=None):
+    """{(cat, name): fields} for every ID for which owned(id) is true. rename(id) -> the name used for
+    the IDs it refers to (default: their own)."""
+    global _rename
+    _rename = rename
+    try:
+        return _snapshot(owned)
+    finally:
+        _rename = None
+
+
+def _snapshot(owned):
     _preview_masters.clear()
     _anim.clear()
     _preview_masters.update(s.collection.as_pointer() for s in bpy.data.scenes
