@@ -788,9 +788,13 @@ def test_robustness():
     check(status("IMAGE", "Shared") == diff.SAME, f"same texture by another relative path "
           f"({changed_fields('IMAGE', 'Shared')})")
     renamed = sorted((e.cat, e.current, e.incoming) for e in ses.S.entries if e.status == diff.RENAMED)
+    renamed = [r for r in renamed if r[0] != "NODETREE"]
     check(renamed == [("MATERIAL", "ChainMat", "ChainMat2"),
                       ("MATERIAL", "Glass", "Glass2"), ("MESH", "ChainMesh", "ChainMesh2"),
                       ("OBJECT", "Crate", "Crate2")], f"renames found, a chain of them too ({renamed})")
+    nest = sorted(e.current for e in ses.S.entries if e.cat == "NODETREE" and e.status == diff.RENAMED)
+    check(nest == [f"Nest{i}" for i in range(6)] and status("MATERIAL", "Nested") == diff.SAME,
+          f"six nested renamed node groups all pair up, their material unchanged ({nest})")
     users = [n for cat, n in [("OBJECT", f"Pane{i}") for i in range(3)] + [("MESH", f"Pane{i}Mesh") for i in range(3)]
              + [("OBJECT", "Chain"), ("COLLECTION", "Crates")] if status(cat, n) != diff.SAME]
     check(not users, f"what uses a renamed data-block is unchanged ({users})")

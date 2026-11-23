@@ -490,7 +490,26 @@ def build_robustness(variant, path, shared_texture):
     sc.collection.children.link(crates)
     crate = bpy.data.objects.new("Crate", None)
     crates.objects.link(crate)
+    # Six nested node groups (a material uses the outermost): each level only matches its renamed
+    # version once the level inside it is mapped, so the renames take a round per level.
+    child = None
+    for i in reversed(range(6)):
+        ng = bpy.data.node_groups.new(f"Nest{i}", "ShaderNodeTree")
+        ng.interface.new_socket("Color", in_out="OUTPUT", socket_type="NodeSocketColor")
+        node = ng.nodes.new("ShaderNodeGroup") if child else ng.nodes.new("ShaderNodeRGB")
+        if child:
+            node.node_tree = child
+        else:
+            node.outputs[0].default_value = (0.1, 0.7, 0.3, 1)
+        ng.links.new(node.outputs[0], ng.nodes.new("NodeGroupOutput").inputs[0])
+        child = ng
+    nested = bpy.data.materials.new("Nested")
+    nested.diffuse_color = (0.5, 0.5, 0.1, 1)
+    nested.node_tree.nodes.new("ShaderNodeGroup").node_tree = child
+    nested.use_fake_user = True
     if inc:  # renamed, nothing else
+        for i in range(6):
+            bpy.data.node_groups[f"Nest{i}"].name = f"Nest{i}b"
         glass.name = "Glass2"
         chain_mat.name, chain_me.name = "ChainMat2", "ChainMesh2"
         crate.name = "Crate2"

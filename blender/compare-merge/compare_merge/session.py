@@ -282,13 +282,16 @@ def rediff():
     """Diff, then diff again with what the incoming file renamed read under its current name, until the
     renames found stop changing. Everything refers to other IDs by name (a material slot, a collection's
     objects), so without this one renamed material also changes every object and mesh using it. Each
-    round can find more: a renamed mesh only matches once its renamed material does."""
-    renames = {}
-    for _ in range(5):
+    round can find more: a renamed mesh only matches once its renamed material does, and nested node
+    groups take a round per level. Stops when a round finds nothing new, or finds a mapping already
+    tried (renames that would only flip between two answers), which also guarantees it ends."""
+    renames, tried = {}, set()
+    while True:
+        tried.add(frozenset(renames.items()))
         inc = incoming_with(renames)
         entries = diff.diff(S.current_snap, inc, snapshot.CAT_ORDER)
         found = {(e.cat, e.incoming): e.current for e in entries if e.status == diff.RENAMED}
-        if found == renames:
+        if found == renames or frozenset(found.items()) in tried:
             break
         renames = found
     S.incoming_snap, S.entries = inc, entries
